@@ -2,16 +2,16 @@ package com.compass_gpt.presentation
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context
+import android.content.Context // Added for getSystemService
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
-import android.hardware.SensorManager
+import android.hardware.SensorManager // Import SensorManager constants
 import android.hardware.GeomagneticField
 import android.location.Location
 import android.os.Bundle
-import android.os.Looper
+import android.os.Looper // Added for mainLooper
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -24,13 +24,12 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.abs
 
 class MainActivity : Activity(), SensorEventListener {
 
     // --- Constants ---
     private val LOCATION_PERMISSION_REQUEST_CODE = 1001
-    private val ALPHA = 0.25f // Filter for Azimuth
+    private val ALPHA = 0.25f // Low-pass filter smoothing factor
 
     // --- UI ---
     private lateinit var compassView: CompassView
@@ -43,8 +42,9 @@ class MainActivity : Activity(), SensorEventListener {
 
     // --- State ---
     private var filteredAzimuthDeg = 0f
-    private var currentPitchDeg = 0f // Add state for pitch
-    private var currentRollDeg = 0f  // Add state for roll
+    private var currentPitchDeg = 0f
+    private var currentRollDeg = 0f
+    private var currentSensorAccuracy: Int = SensorManager.SENSOR_STATUS_UNRELIABLE // Store accuracy state
     private var bezelRotationDeg = 0f
 
     // --- Location ---
@@ -55,7 +55,6 @@ class MainActivity : Activity(), SensorEventListener {
     private var currentAltitudeM = 0f
     private var lastKnownLocation: Location? = null
 
-    // --- onCreate, onResume, onPause, Location Handling ... remain unchanged ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -78,6 +77,9 @@ class MainActivity : Activity(), SensorEventListener {
 
         if (rotationVectorSensor == null) {
             Toast.makeText(this, "Rotation Vector Sensor not available!", Toast.LENGTH_LONG).show()
+        } else {
+            // Set initial accuracy state in the view when created
+            compassView.setSensorAccuracy(currentSensorAccuracy)
         }
 
         // Initialize Location Services
@@ -85,15 +87,17 @@ class MainActivity : Activity(), SensorEventListener {
         createLocationCallback()
         startLocationUpdates()
 
-        // Initial data update
-        updateCompassViewGpsData() // Separate GPS/Time updates from sensor updates
+        // Initial data update for time display etc.
+        updateCompassViewGpsData()
     }
 
     override fun onResume() {
         super.onResume()
+        // Register the Rotation Vector sensor listener
         rotationVectorSensor?.also { sensor ->
             sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
         }
+        // Request location updates if permissions are granted
         if (checkLocationPermission()) {
             requestLocationUpdatesInternal()
         }
@@ -101,9 +105,12 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onPause() {
         super.onPause()
-        sensorManager.unregisterListener(this)
+        // Unregister listeners to save power
+        sensorManager.unregisterListener(this) // Unregisters all listeners for this context
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
+
+    // --- Location Handling ---
 
     private fun checkLocationPermission(): Boolean {
         return ActivityCompat.checkSelfPermission(
@@ -130,8 +137,8 @@ class MainActivity : Activity(), SensorEventListener {
     private fun requestLocationUpdatesInternal() {
         if (!checkLocationPermission()) return
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L)
-                .setMinUpdateIntervalMillis(5000L)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L) // 10 secs
+                .setMinUpdateIntervalMillis(5000L) // 5 secs fastest
                 .build()
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
         } catch (secEx: SecurityException) {
@@ -144,13 +151,13 @@ class MainActivity : Activity(), SensorEventListener {
             override fun onLocationResult(result: LocationResult) {
                 result.lastLocation?.let { location ->
                     lastKnownLocation = location
-                    updateCompassViewGpsData() // Update GPS/Time data on location change
+                    updateCompassViewGpsData() // Update UI data when location changes
                 }
             }
         }
     }
-    // --- Renamed and focused ---
-    // Updates GPS/Time related data displayed in the CompassView
+
+    // Updates the GPS/Time data displayed in the CompassView
     private fun updateCompassViewGpsData() {
         lastKnownLocation?.let { location ->
             currentSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
@@ -172,11 +179,11 @@ class MainActivity : Activity(), SensorEventListener {
         val utcStr = utcFmt.format(now.time)
 
         // Send updated GPS/Time data to the view
-        // Note: Azimuth, Pitch, Roll are updated separately in onSensorChanged
         compassView.setGpsData(currentSpeedKmh, currentAltitudeM, declinationDeg, localStr, utcStr)
     }
 
-    // --- Sensor Handling ---
+    // --- Sensor Handling (using TYPE_ROTATION_VECTOR) ---
+
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
             SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
@@ -187,7 +194,7 @@ class MainActivity : Activity(), SensorEventListener {
             val pitchRad = orientationAngles[1]
             val rollRad = orientationAngles[2]
 
-            // --- Azimuth Processing ---
+            // Azimuth Processing
             val azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
             val normalizedAzimuthDeg = (azimuthDeg % 360f + 360f) % 360f
             var delta = normalizedAzimuthDeg - filteredAzimuthDeg
@@ -196,34 +203,33 @@ class MainActivity : Activity(), SensorEventListener {
             filteredAzimuthDeg += ALPHA * delta
             filteredAzimuthDeg = (filteredAzimuthDeg % 360f + 360f) % 360f
 
-            // --- Pitch and Roll Processing ---
-            // Convert to Degrees (directly use, maybe add filtering later if needed)
+            // Pitch and Roll Processing
             currentPitchDeg = Math.toDegrees(pitchRad.toDouble()).toFloat()
             currentRollDeg = Math.toDegrees(rollRad.toDouble()).toFloat()
 
-            // --- Update CompassView with Sensor Data ---
-            // Send all sensor-derived data in one call
+            // Update CompassView with Sensor Data
             compassView.setSensorData(filteredAzimuthDeg, currentPitchDeg, currentRollDeg)
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        if (sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
-            if (accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE || accuracy == SensorManager.SENSOR_STATUS_ACCURACY_LOW) {
-                Toast.makeText(this, "Compass accuracy low. Try calibrating.", Toast.LENGTH_LONG).show()
-            }
+        // Update accuracy state ONLY if it has actually changed
+        if (sensor?.type == Sensor.TYPE_ROTATION_VECTOR && accuracy != currentSensorAccuracy) {
+            currentSensorAccuracy = accuracy
+            // Pass the new accuracy level to the CompassView
+            compassView.setSensorAccuracy(accuracy)
         }
     }
 
     // --- Crown Input Handling ---
+
     override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
         if (event?.action == MotionEvent.ACTION_SCROLL &&
-            event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)
+            event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER) // Use correct constant
         ) {
             val delta = -event.getAxisValue(MotionEvent.AXIS_SCROLL)
             val sensitivity = 4.0f
             bezelRotationDeg = (bezelRotationDeg + delta * sensitivity % 360f + 360f) % 360f
-            // Only update bezel rotation in the view
             compassView.setBezelRotation(bezelRotationDeg)
             return true
         }
@@ -231,6 +237,7 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     // --- Permission Result Handling ---
+
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
@@ -240,7 +247,7 @@ class MainActivity : Activity(), SensorEventListener {
                 startLocationUpdates()
             } else {
                 Toast.makeText(this, "Location permission denied. GPS features disabled.", Toast.LENGTH_LONG).show()
-                updateCompassViewGpsData() // Update UI to show lack of GPS data
+                updateCompassViewGpsData()
             }
         }
     }

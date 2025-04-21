@@ -1,22 +1,21 @@
 package com.compass_gpt.presentation
 
-// ... (Imports remain the same) ...
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
+// Imports provided by user (and HapticFeedbackConstants added)
 import android.content.Context
 import android.graphics.*
+import android.hardware.SensorManager // Import SensorManager constants
 import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.LinearInterpolator
 import androidx.core.graphics.toColorInt
 import androidx.core.graphics.withRotation
-import com.compass_gpt.R
+import com.compass_gpt.R // Import R for raw resource
 import kotlin.math.*
+import android.view.HapticFeedbackConstants // For haptic feedback
+
 
 class CompassView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
@@ -25,22 +24,34 @@ class CompassView @JvmOverloads constructor(
     // --- Constants ---
     private val LONG_PRESS_DURATION_MS = 3000L
     private val DOUBLE_TAP_TIMEOUT_MS = 300L
-    private val EASTER_EGG_DURATION_MS = 6000L // 6 seconds
+    private val EASTER_EGG_DURATION_MS = 6000L
     private val SINGLE_TAP_CONFIRM_DELAY_MS = DOUBLE_TAP_TIMEOUT_MS + 50L
-    // --- NEW: Scale factor for Cat Level mode ---
-    private val CAT_LEVEL_SCALE = 1.8f // How much larger the movement area is
-
+    private val CAT_LEVEL_SCALE = 1.8f
 
     // --- Paints ---
-    // ... (All paints remain the same, including catLevelBoundaryPaint) ...
     private val bezelPaint = Paint().apply {
         color = Color.WHITE
         strokeWidth = 2f
         style = Paint.Style.STROKE
         isAntiAlias = true
     }
+    // Readout paints: one default, two colored for BRG line
     private val readoutPaint = Paint().apply {
         color = Color.WHITE
+        textSize = 30f
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    private val magneticReadoutPaint = Paint().apply {
+        color = Color.RED // Match magnetic needle
+        textSize = 30f
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    private val trueNorthReadoutPaint = Paint().apply {
+        color = Color.BLUE // Match true north needle
         textSize = 30f
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
@@ -102,27 +113,40 @@ class CompassView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
         isAntiAlias = true
     }
+    // --- Go-To Needle Paint ---
+    private val goToNeedlePaint = Paint().apply {
+        color = Color.YELLOW // Distinct color
+        strokeWidth = 5f    // Thinner than main needle
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+    }
+    // --- Sensor Accuracy Paints ---
+    private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
+    private val accuracyPaintMedium = Paint().apply { color = Color.YELLOW; style = Paint.Style.FILL }
+    private val accuracyPaintLow = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
+    private val accuracyPaintUnreliable = Paint().apply { color = Color.GRAY; style = Paint.Style.FILL }
 
 
     // --- Path & Symbols ---
-    // ... (Path and Symbols remain the same) ...
     private val bearingMarkerPath = Path()
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
 
-
     // --- State Variables ---
-    // ... (Sensor, GPS/Time, UI State remain the same) ...
+    // Sensor Data
     private var magneticNeedleDeg = 0f
     private var pitchDeg = 0f
     private var rollDeg = 0f
+    // GPS/Time Data
     private var bezelRotationDeg = 0f
     private var speedKmh = 0f
     private var altitudeM = 0f
     private var declDeg = 0f
     private var localTime = ""
     private var utcTime = ""
+    // UI State
     private var showTrueNorth = false
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
@@ -130,30 +154,31 @@ class CompassView @JvmOverloads constructor(
     private var isHoldingSymbol = false
     private var showSecretText = false
     private var lastTapTimeMs = 0L
-    private var isCatLevelModeActive = false // Back to this name
+    private var isCatLevelModeActive = false
+    // Accuracy State
+    private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
     // Handlers and Runnables
     private val interactionHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
-    private var catLevelTimeoutRunnable: Runnable? = null // Back to this name
+    private var catLevelTimeoutRunnable: Runnable? = null
     private var singleTapRunnable: Runnable? = null
     // Sound State
     private var mediaPlayer: MediaPlayer? = null
 
-
     // --- Initialization ---
-    // ... (init block remains the same) ...
     init {
         try {
-            mediaPlayer = MediaPlayer.create(context, R.raw.meow)
+            mediaPlayer = MediaPlayer.create(context, R.raw.meow) // Ensure R is imported
             mediaPlayer?.setOnErrorListener { mp, what, extra -> true }
         } catch (e: Exception) {
+            // Log.e("CompassView", "Error loading media player", e)
             mediaPlayer = null
         }
+        // Enable haptic feedback
+        isHapticFeedbackEnabled = true
     }
 
-
     // --- Public Methods (setters) ---
-    // ... (Setters remain the same) ...
     fun setSensorData(azimuth: Float, pitch: Float, roll: Float) {
         magneticNeedleDeg = (azimuth % 360f + 360f) % 360f
         this.pitchDeg = pitch
@@ -172,84 +197,104 @@ class CompassView @JvmOverloads constructor(
         utcTime = utc
         invalidate()
     }
+    fun setSensorAccuracy(accuracy: Int) {
+        if (accuracy != sensorAccuracyLevel) {
+            sensorAccuracyLevel = accuracy
+            invalidate()
+        }
+    }
 
 
     // --- Touch Event Handling ---
-    // ... (onTouchEvent logic remains the same as previous Cat Level version) ...
     override fun onTouchEvent(event: MotionEvent?): Boolean {
         if (isCatLevelModeActive) return true // Block interaction during easter egg
 
         if (event == null) return super.onTouchEvent(event)
-        val touchX = event.x - width / 2f
+        val touchX = event.x - width / 2f // Adjust coords relative to center
         val touchY = event.y - height / 2f
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                // Cancel any pending single tap confirmation first
                 singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
                 singleTapRunnable = null
 
                 if (symbolBounds.contains(touchX, touchY)) {
                     isHoldingSymbol = true
-                    showSecretText = false
+                    showSecretText = false // Reset secret text flag on new press
+
+                    // Define and post the long press runnable
                     longPressRunnable = Runnable {
-                        if (isHoldingSymbol) {
+                        // This runs after LONG_PRESS_DURATION_MS if still holding
+                        if (isHoldingSymbol) { // Double check if still holding
                             showSecretText = true
-                            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                            invalidate()
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) // Feedback
+                            invalidate() // Redraw to show text
                         }
                     }
                     interactionHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION_MS)
-                    return true
+
+                    return true // Consume the DOWN event
                 }
+                // If DOWN is outside symbol, reset double tap timer
                 lastTapTimeMs = 0L
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // Optional: If finger moves OFF the symbol while holding, cancel the long press
                 if (isHoldingSymbol && !symbolBounds.contains(touchX, touchY)) {
-                    resetSymbolInteractionState()
+                    resetSymbolInteractionState() // Cancels long press AND pending single tap
                 }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isHoldingSymbol) {
                     val currentTime = System.currentTimeMillis()
-                    val wasLongPress = showSecretText
-                    val wasHolding = isHoldingSymbol
-                    resetSymbolInteractionState()
+                    val wasLongPress = showSecretText // Did the long press already trigger?
+                    val wasHolding = isHoldingSymbol // Remember hold state before resetting
 
+                    // Always reset long press state first
+                    resetSymbolInteractionState() // This cancels long press timer and pending single tap
+
+                    // Only process tap/double tap if finger lifted UP on the symbol
                     if (event.action == MotionEvent.ACTION_UP && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
-                            // Long press release
+                            // Long press finished, do nothing on UP
                         } else if (currentTime - lastTapTimeMs <= DOUBLE_TAP_TIMEOUT_MS) {
-                            // Double tap
-                            lastTapTimeMs = 0L
-                            activateCatLevelMode() // Activate Cat Level easter egg
-                            performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            // --- Double tap ---
+                            lastTapTimeMs = 0L // Consume the double tap
+                            activateCatLevelMode() // Start easter egg
+                            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) // Haptic
+                            // DO NOT schedule a single tap runnable here
                         } else {
-                            // Potential single tap
-                            lastTapTimeMs = currentTime
+                            // --- Potential single tap ---
+                            lastTapTimeMs = currentTime // Record time for next potential tap
+
+                            // Schedule the single tap action with a delay
                             singleTapRunnable = Runnable {
-                                showTrueNorth = !showTrueNorth
-                                performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                                showTrueNorth = !showTrueNorth // Toggle North mode
+                                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) // Tap feedback
                                 invalidate()
-                                singleTapRunnable = null
+                                singleTapRunnable = null // Clear self after running
                             }
                             interactionHandler.postDelayed(singleTapRunnable!!, SINGLE_TAP_CONFIRM_DELAY_MS)
                         }
                     } else {
+                        // Finger lifted off symbol or ACTION_CANCEL - reset double tap timer
                         lastTapTimeMs = 0L
                     }
+                    // Consume the event if we started holding
                     if (wasHolding) return true
                 }
+                // Reset double tap timer if we weren't holding (e.g., tap outside)
                 lastTapTimeMs = 0L
             }
         }
+        // If event wasn't consumed above, pass it on
         return super.onTouchEvent(event)
     }
 
-
     // --- Reset Interaction State ---
-    // ... (resetSymbolInteractionState remains the same) ...
     private fun resetSymbolInteractionState() {
         longPressRunnable?.let { interactionHandler.removeCallbacks(it) }
         longPressRunnable = null
@@ -264,34 +309,25 @@ class CompassView @JvmOverloads constructor(
         }
     }
 
-    // --- Activate Cat Level Mode ---
-    // ... (activateCatLevelMode remains the same) ...
+    // --- Activate/Deactivate Cat Level Mode ---
     private fun activateCatLevelMode() {
         if (isCatLevelModeActive) return
-        resetSymbolInteractionState()
-
+        resetSymbolInteractionState() // Ensure other interactions stopped
         isCatLevelModeActive = true
-
         if (mediaPlayer?.isPlaying == false) {
             try { mediaPlayer?.seekTo(0); mediaPlayer?.start() }
             catch (e: Exception) { /* Handle error */ }
         }
-
         catLevelTimeoutRunnable = Runnable { deactivateCatLevelMode() }
         interactionHandler.postDelayed(catLevelTimeoutRunnable!!, EASTER_EGG_DURATION_MS)
-
-        invalidate()
+        invalidate() // Initial draw in cat level mode
     }
-
-
-    // --- Deactivate Cat Level Mode ---
-    // ... (deactivateCatLevelMode remains the same) ...
     private fun deactivateCatLevelMode() {
         isCatLevelModeActive = false
         catLevelTimeoutRunnable?.let { interactionHandler.removeCallbacks(it) }
         catLevelTimeoutRunnable = null
-        lastTapTimeMs = 0L
-        invalidate()
+        lastTapTimeMs = 0L // Reset tap timer after easter egg finishes
+        invalidate() // Redraw in normal mode
     }
 
 
@@ -300,16 +336,17 @@ class CompassView @JvmOverloads constructor(
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        canvas.translate(cx, cy)
+        canvas.translate(cx, cy) // Origin is now center screen
 
         val edgeRadius = min(cx, cy)
         val mainRadius = edgeRadius * 0.90f
 
-        // 1) Draw Bezel
+        // 1) Draw Bezel - Rotated internally for drawing ticks/labels
         canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
 
-        // 2) Draw Needle (Hide if cat level active)
+        // 2) Draw North Needle & Go-To Needle (Hide if cat level active)
         if (!isCatLevelModeActive) {
+            // Calculate North heading relative to screen top
             val headingToShow: Float
             val currentNeedlePaint: Paint
             if (showTrueNorth) {
@@ -319,25 +356,31 @@ class CompassView @JvmOverloads constructor(
                 headingToShow = magneticNeedleDeg
                 currentNeedlePaint = magneticNeedlePaint
             }
+            // Rotate canvas so UP points towards North
             canvas.withRotation(-headingToShow) {
                 drawNeedle(this, mainRadius, currentNeedlePaint)
             }
+
+            // Draw Go-To Needle (Points straight UP towards blue marker)
+            // NO specific rotation needed here, drawn directly on translated canvas
+            drawGoToNeedle(canvas, mainRadius, goToNeedlePaint)
         }
 
-        // 3) Draw Bearing Marker
+        // 3) Draw Bearing Marker (Fixed at screen top)
         drawBearingMarker(canvas, edgeRadius)
 
         // 4) Draw Mode Symbol (handles cat level mode internally)
-        drawModeSymbol(canvas, mainRadius) // Pass mainRadius for positioning
+        drawModeSymbol(canvas, mainRadius)
 
-        // 5) Draw Bubble Level (Hide if cat level active)
+        // 5) Draw Bubble Level & Accuracy Indicator (Hide if cat level active)
         if (!isCatLevelModeActive) {
             drawBubbleLevel(canvas, mainRadius)
+            drawAccuracyIndicator(canvas, mainRadius)
         }
 
         // 6) Draw Readouts (Hide if cat level active)
         if (!isCatLevelModeActive) {
-            drawReadouts(canvas)
+            drawReadouts(canvas) // Uses colored BRG line internally now
         }
 
         // 7) Draw Secret Text Overlay
@@ -347,7 +390,21 @@ class CompassView @JvmOverloads constructor(
     }
 
     // --- Private Drawing Helpers ---
-    // ... (drawBezel, drawNeedle, drawReadouts, drawBearingMarker, drawBubbleLevel, drawSecretTextOverlay remain the same) ...
+
+    private fun drawBearingMarker(canvas: Canvas, radius: Float) {
+        val markerOuterY = -radius * 1.0f
+        val markerHeight = radius * 0.1f
+        val markerInnerY = markerOuterY + markerHeight
+        val markerWidth = radius * 0.12f
+
+        bearingMarkerPath.reset()
+        bearingMarkerPath.moveTo(0f, markerOuterY)
+        bearingMarkerPath.lineTo(-markerWidth / 2f, markerInnerY)
+        bearingMarkerPath.lineTo(markerWidth / 2f, markerInnerY)
+        bearingMarkerPath.close()
+        canvas.drawPath(bearingMarkerPath, bearingMarkerPaint)
+    }
+
     private fun drawBezel(canvas: Canvas, radius: Float) {
         for (angle in 0 until 360 step 15) {
             val isMajor = (angle % 90 == 0)
@@ -371,49 +428,60 @@ class CompassView @JvmOverloads constructor(
             canvas.drawText(label, x, y + textHeightOffset, readoutPaint)
         }
     }
+
     private fun drawNeedle(canvas: Canvas, radius: Float, paint: Paint) {
         val innerNeedleRadius = radius * 0.3f
         val outerNeedleRadius = radius * 0.9f
         canvas.drawLine(0f, -innerNeedleRadius, 0f, -outerNeedleRadius, paint)
     }
-    private fun drawReadouts(canvas: Canvas) {
-        val bearing = ((360f - bezelRotationDeg) % 360f + 360f) % 360f
-        val bearingSuffix = if (showTrueNorth) "°T" else "°M"
-        val lineBRGUpdated = "BRG ${bearing.toInt()}$bearingSuffix"
-        val lineSpd = "Spd: %.1f km/h".format(speedKmh)
-        val lineAlt = "Alt: %.0f m".format(altitudeM)
-        val lineDecl = "Decl: %+.1f°".format(declDeg)
-        val lineLocal = "Loc: $localTime"
-        val lineUTC = "UTC: $utcTime"
-        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineDecl, lineLocal, lineUTC)
 
-        val textHeight = readoutPaint.descent() - readoutPaint.ascent()
-        val lineSpacing = textHeight * 1.15f
-        val totalHeight = (lines.size - 1) * lineSpacing
-        var y = -totalHeight / 2f - readoutPaint.ascent()
+    private fun drawModeSymbol(canvas: Canvas, radius: Float) {
+        val currentSymbol: String
+        val currentPaint: Paint
+        if (showTrueNorth) {
+            currentSymbol = trueNorthSymbol
+            currentPaint = catSymbolTrueNorthPaint
+        } else {
+            currentSymbol = magneticNorthSymbol
+            currentPaint = catSymbolMagneticPaint
+        }
+        val textBounds = Rect()
+        currentPaint.getTextBounds(currentSymbol, 0, currentSymbol.length, textBounds)
+        val textHeight = textBounds.height().toFloat()
+        val textWidth = currentPaint.measureText(currentSymbol)
+        val yOffset = textHeight / 2f - textBounds.bottom
 
-        for (line in lines) {
-            canvas.drawText(line, 0f, y, readoutPaint)
-            y += lineSpacing
+        if (isCatLevelModeActive) {
+            val catLevelContainerRadius = (radius * 0.35f) * CAT_LEVEL_SCALE
+            val maxAngleMap = 45f
+            canvas.drawCircle(0f, 0f, catLevelContainerRadius, catLevelBoundaryPaint)
+            val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
+            val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
+            var catOffsetX = -catLevelContainerRadius * sin(rollRad) * (90f / maxAngleMap)
+            var catOffsetY = catLevelContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
+            val totalOffset = sqrt(catOffsetX.pow(2) + catOffsetY.pow(2))
+            if (totalOffset > catLevelContainerRadius) {
+                val scale = catLevelContainerRadius / totalOffset
+                catOffsetX *= scale
+                catOffsetY *= scale
+            }
+            canvas.drawText(currentSymbol, catOffsetX, catOffsetY + yOffset, currentPaint)
+        } else {
+            val symbolX = -radius * 0.60f
+            val symbolY = 0f
+            canvas.drawText(currentSymbol, symbolX, symbolY + yOffset, currentPaint)
+            val clickLeft = symbolX - textWidth / 2f - symbolClickPadding
+            val clickTop = symbolY + yOffset - textHeight / 2f - symbolClickPadding
+            val clickRight = symbolX + textWidth / 2f + symbolClickPadding
+            val clickBottom = symbolY + yOffset + textHeight / 2f + symbolClickPadding
+            symbolBounds.set(clickLeft, clickTop, clickRight, clickBottom)
         }
     }
-    private fun drawBearingMarker(canvas: Canvas, radius: Float) {
-        val markerOuterY = -radius * 1.0f
-        val markerHeight = radius * 0.1f
-        val markerInnerY = markerOuterY + markerHeight
-        val markerWidth = radius * 0.12f
 
-        bearingMarkerPath.reset()
-        bearingMarkerPath.moveTo(0f, markerOuterY)
-        bearingMarkerPath.lineTo(-markerWidth / 2f, markerInnerY)
-        bearingMarkerPath.lineTo(markerWidth / 2f, markerInnerY)
-        bearingMarkerPath.close()
-        canvas.drawPath(bearingMarkerPath, bearingMarkerPaint)
-    }
-    private fun drawBubbleLevel(canvas: Canvas, radius: Float) { // Removed scale param
+    private fun drawBubbleLevel(canvas: Canvas, radius: Float) {
         val levelCenterX = radius * 0.60f
         val levelCenterY = 0f
-        val levelRadius = radius * 0.15f // Use normal size
+        val levelRadius = radius * 0.15f
 
         canvas.drawCircle(levelCenterX, levelCenterY, levelRadius, bubbleLevelOutlinePaint)
 
@@ -439,6 +507,7 @@ class CompassView @JvmOverloads constructor(
             bubbleLevelBubblePaint
         )
     }
+
     private fun drawSecretTextOverlay(canvas: Canvas, mainRadius: Float) {
         val targetCenterY = -mainRadius * 0.5f
         val textBounds = Rect()
@@ -448,90 +517,62 @@ class CompassView @JvmOverloads constructor(
         canvas.drawText(secretText, 0f, drawY, secretTextPaint)
     }
 
+    private fun drawReadouts(canvas: Canvas) {
+        val bearing = ((360f - bezelRotationDeg) % 360f + 360f) % 360f
+        val bearingSuffix = if (showTrueNorth) "°T" else "°M"
+        val lineBRGUpdated = "BRG ${bearing.toInt()}$bearingSuffix"
+        val lineSpd = "Spd: %.1f km/h".format(speedKmh)
+        val lineAlt = "Alt: %.0f m".format(altitudeM)
+        val lineDecl = "Decl: %+.1f°".format(declDeg)
+        val lineLocal = "Loc: $localTime"
+        val lineUTC = "UTC: $utcTime"
+        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineDecl, lineLocal, lineUTC)
 
-    // --- UPDATED: Handles drawing static symbol OR ENLARGED cat level mode ---
-    private fun drawModeSymbol(canvas: Canvas, radius: Float) { // radius is mainRadius
-        // Select correct SYMBOL and PAINT based on North mode
-        val currentSymbol: String
-        val currentPaint: Paint
-        if (showTrueNorth) {
-            currentSymbol = trueNorthSymbol
-            currentPaint = catSymbolTrueNorthPaint
-        } else {
-            currentSymbol = magneticNorthSymbol
-            currentPaint = catSymbolMagneticPaint
-        }
+        val textHeight = readoutPaint.descent() - readoutPaint.ascent()
+        val lineSpacing = textHeight * 1.15f
+        val totalHeight = (lines.size - 1) * lineSpacing
+        var currentY = -totalHeight / 2f - readoutPaint.ascent()
 
-        // Calculate text properties (needed for centering)
-        val textBounds = Rect()
-        currentPaint.getTextBounds(currentSymbol, 0, currentSymbol.length, textBounds)
-        val textHeight = textBounds.height().toFloat()
-        val textWidth = currentPaint.measureText(currentSymbol)
-        val yOffset = textHeight / 2f - textBounds.bottom // Vertical centering offset
+        val brgPaint = if (showTrueNorth) trueNorthReadoutPaint else magneticReadoutPaint
 
-        if (isCatLevelModeActive) {
-            // --- Draw Cat Level Mode (Enlarged) ---
-            // --- SIZE ADJUSTMENT ---
-            // Use the scale factor here for the container radius
-            val catLevelContainerRadius = (radius * 0.35f) * CAT_LEVEL_SCALE
-            val maxAngleMap = 45f // Keep sensitivity the same
-
-            // Optional: Draw enlarged boundary circle
-            canvas.drawCircle(0f, 0f, catLevelContainerRadius, catLevelBoundaryPaint)
-
-            // Calculate offset based on pitch/roll relative to the ENLARGED radius
-            val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
-            val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
-            var catOffsetX = -catLevelContainerRadius * sin(rollRad) * (90f / maxAngleMap)
-            var catOffsetY = catLevelContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
-
-            // Clamp within the ENLARGED radius
-            val totalOffset = sqrt(catOffsetX.pow(2) + catOffsetY.pow(2))
-            if (totalOffset > catLevelContainerRadius) {
-                val scale = catLevelContainerRadius / totalOffset
-                catOffsetX *= scale
-                catOffsetY *= scale
-            }
-
-            // Optional: Scale the symbol size slightly as well?
-            // val currentTextSize = currentPaint.textSize
-            // currentPaint.textSize = currentTextSize * sqrt(CAT_LEVEL_SCALE) // Example scaling
-
-            // Draw the symbol at the calculated offset position
-            canvas.drawText(currentSymbol, catOffsetX, catOffsetY + yOffset, currentPaint)
-
-            // Restore text size if changed
-            // currentPaint.textSize = currentTextSize
-
-            // DO NOT update symbolBounds when in this mode
-
-        } else {
-            // --- Draw Static Symbol ---
-            val symbolX = -radius * 0.60f // Original static X position
-            val symbolY = 0f             // Original static Y position
-
-            // Draw the symbol statically
-            canvas.drawText(currentSymbol, symbolX, symbolY + yOffset, currentPaint)
-
-            // Update clickable bounds ONLY when static
-            val clickLeft = symbolX - textWidth / 2f - symbolClickPadding
-            val clickTop = symbolY + yOffset - textHeight / 2f - symbolClickPadding
-            val clickRight = symbolX + textWidth / 2f + symbolClickPadding
-            val clickBottom = symbolY + yOffset + textHeight / 2f + symbolClickPadding
-            symbolBounds.set(clickLeft, clickTop, clickRight, clickBottom)
+        for ((index, line) in lines.withIndex()) {
+            val paintToUse = if (index == 0) brgPaint else readoutPaint
+            canvas.drawText(line, 0f, currentY, paintToUse)
+            currentY += lineSpacing
         }
     }
 
+    private fun drawGoToNeedle(canvas: Canvas, radius: Float, paint: Paint) {
+        // Start at 65%, End at 80% of mainRadius
+        val finalInnerRadius = radius * 0.65f
+        val finalOuterRadius = radius * 0.80f
+        // Draw directly on the provided canvas (already translated to center)
+        canvas.drawLine(0f, -finalInnerRadius, 0f, -finalOuterRadius, paint)
+    }
+
+    private fun drawAccuracyIndicator(canvas: Canvas, radius: Float) {
+        val indicatorRadius = radius * 0.05f
+        val indicatorX = radius * 0.60f // Same X as bubble level center
+        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f // Below bubble level with padding
+
+        val paintToUse = when (sensorAccuracyLevel) {
+            SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> accuracyPaintHigh
+            SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> accuracyPaintMedium
+            SensorManager.SENSOR_STATUS_ACCURACY_LOW -> accuracyPaintLow
+            else -> accuracyPaintUnreliable
+        }
+        canvas.drawCircle(indicatorX, indicatorY, indicatorRadius, paintToUse)
+    }
 
     // --- Resource Cleanup ---
-    // ... (onDetachedFromWindow remains the same) ...
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         mediaPlayer?.release()
         mediaPlayer = null
+        // Clear all runnables from the handler
         interactionHandler.removeCallbacksAndMessages(null)
         longPressRunnable = null
         singleTapRunnable = null
-        catLevelTimeoutRunnable = null // Use correct name
+        catLevelTimeoutRunnable = null
     }
 }
