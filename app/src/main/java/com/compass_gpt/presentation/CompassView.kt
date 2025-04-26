@@ -158,7 +158,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private val squirrelSymbol = "🐿️"
+    private val squirrelSymbol = "🐿️"   // ha ha ha
 
     // --- State Variables ---
     private var magneticNeedleDeg = 0f
