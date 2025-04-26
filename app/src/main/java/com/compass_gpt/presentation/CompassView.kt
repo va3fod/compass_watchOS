@@ -1,6 +1,6 @@
 package com.compass_gpt.presentation
 
-// Imports provided by user (and HapticFeedbackConstants added)
+// Base Imports from User
 import android.content.Context
 import android.graphics.*
 import android.hardware.SensorManager // Import SensorManager constants
@@ -14,7 +14,14 @@ import androidx.core.graphics.toColorInt
 import androidx.core.graphics.withRotation
 import com.compass_gpt.R // Import R for raw resource
 import kotlin.math.*
+// Additional required imports
 import android.view.HapticFeedbackConstants // For haptic feedback
+import android.os.SystemClock // Import SystemClock for elapsedRealtime
+import android.animation.Animator // Base class for AnimatorListenerAdapter
+import android.animation.AnimatorListenerAdapter // To know when animation ends
+import android.animation.ValueAnimator // For fireworks animation
+import android.view.animation.AccelerateInterpolator // For fireworks effect
+import kotlin.random.Random // For random firework colors
 
 
 class CompassView @JvmOverloads constructor(
@@ -24,9 +31,19 @@ class CompassView @JvmOverloads constructor(
     // --- Constants ---
     private val LONG_PRESS_DURATION_MS = 3000L
     private val DOUBLE_TAP_TIMEOUT_MS = 300L
-    private val EASTER_EGG_DURATION_MS = 6000L
+    // Easter Egg duration is now controlled by FIREWORKS_DURATION_MS
     private val SINGLE_TAP_CONFIRM_DELAY_MS = DOUBLE_TAP_TIMEOUT_MS + 50L
-    private val CAT_LEVEL_SCALE = 1.8f
+    // Easter Egg Chase Constants
+    private val SQUIRREL_CATCH_THRESHOLD_DP = 15f
+    private val SQUIRREL_SPEED_FACTOR = 0.02f // Slower squirrel
+    private val CAT_MOVE_TIMEOUT_MS = 400L
+    // Fireworks Constants
+    private val FIREWORKS_DURATION_MS = 3000L // 3 seconds duration
+    private val FIREWORKS_PARTICLE_COUNT = 50 // Number of particles per burst
+    private val FIREWORKS_MAX_RADIUS_FACTOR = 0.4f // Max distance particles travel relative to mainRadius
+    private val FIREWORKS_MIN_SPEED_FACTOR = 0.8f // Min initial speed factor
+    private val FIREWORKS_MAX_SPEED_FACTOR = 1.4f // Max initial speed factor
+
 
     // --- Paints ---
     private val bezelPaint = Paint().apply {
@@ -35,7 +52,6 @@ class CompassView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         isAntiAlias = true
     }
-    // Readout paints: one default, two colored for BRG line
     private val readoutPaint = Paint().apply {
         color = Color.WHITE
         textSize = 30f
@@ -44,14 +60,14 @@ class CompassView @JvmOverloads constructor(
         typeface = Typeface.DEFAULT_BOLD
     }
     private val magneticReadoutPaint = Paint().apply {
-        color = Color.RED // Match magnetic needle
+        color = Color.RED
         textSize = 30f
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
         typeface = Typeface.DEFAULT_BOLD
     }
     private val trueNorthReadoutPaint = Paint().apply {
-        color = Color.BLUE // Match true north needle
+        color = Color.BLUE
         textSize = 30f
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
@@ -106,26 +122,35 @@ class CompassView @JvmOverloads constructor(
         isAntiAlias = true
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
     }
-    private val catLevelBoundaryPaint = Paint().apply {
-        color = Color.parseColor("#44FFFFFF")
-        style = Paint.Style.STROKE
-        strokeWidth = 2f
-        pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
-        isAntiAlias = true
-    }
-    // --- Go-To Needle Paint ---
+    // Optional boundary paint - uncomment if needed for debug
+    // private val catLevelBoundaryPaint = Paint().apply { /* ... */ }
     private val goToNeedlePaint = Paint().apply {
-        color = Color.YELLOW // Distinct color
-        strokeWidth = 5f    // Thinner than main needle
+        color = Color.YELLOW
+        strokeWidth = 5f
         style = Paint.Style.STROKE
         isAntiAlias = true
         strokeCap = Paint.Cap.ROUND
     }
-    // --- Sensor Accuracy Paints ---
     private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
     private val accuracyPaintMedium = Paint().apply { color = Color.YELLOW; style = Paint.Style.FILL }
     private val accuracyPaintLow = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
     private val accuracyPaintUnreliable = Paint().apply { color = Color.GRAY; style = Paint.Style.FILL }
+    private val squirrelPaint = Paint().apply {
+        color = Color.parseColor("#FFA500") // Orange-ish
+        textSize = 40f
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+    }
+    private val fireworksParticlePaint = Paint().apply {
+        // Color will be set per particle
+        strokeWidth = 5f // Make particles visible
+        style = Paint.Style.FILL // Draw dots/circles
+        isAntiAlias = true
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val fireworkColors = listOf(
+        Color.YELLOW, Color.RED, Color.WHITE, Color.CYAN, Color.MAGENTA, Color.GREEN
+    )
 
 
     // --- Path & Symbols ---
@@ -133,49 +158,51 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
+    private val squirrelSymbol = "🐿️"
 
     // --- State Variables ---
-    // Sensor Data
     private var magneticNeedleDeg = 0f
     private var pitchDeg = 0f
     private var rollDeg = 0f
-    // GPS/Time Data
     private var bezelRotationDeg = 0f
     private var speedKmh = 0f
     private var altitudeM = 0f
     private var declDeg = 0f
     private var localTime = ""
     private var utcTime = ""
-    // UI State
     private var showTrueNorth = false
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
-    // Interaction State
     private var isHoldingSymbol = false
     private var showSecretText = false
     private var lastTapTimeMs = 0L
-    private var isCatLevelModeActive = false
-    // Accuracy State
+    private var isEasterEggModeActive = false
     private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
-    // Handlers and Runnables
     private val interactionHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
-    private var catLevelTimeoutRunnable: Runnable? = null
+    // Timeout runnable removed, handled by fireworks end
     private var singleTapRunnable: Runnable? = null
-    // Sound State
     private var mediaPlayer: MediaPlayer? = null
+    private var catPositionX: Float = 0f
+    private var catPositionY: Float = 0f
+    private var squirrelPositionX: Float = 0f
+    private var squirrelPositionY: Float = 0f
+    private var isCaught: Boolean = false
+    private var lastCatMoveTimeMs: Long = 0L
+    private val catchThresholdPx: Float
+    private var isFireworksActive: Boolean = false
+    private val fireworksParticles = mutableListOf<FireworkParticle>()
+    private var fireworksAnimator: ValueAnimator? = null
+
 
     // --- Initialization ---
     init {
         try {
-            mediaPlayer = MediaPlayer.create(context, R.raw.meow) // Ensure R is imported
+            mediaPlayer = MediaPlayer.create(context, R.raw.meow)
             mediaPlayer?.setOnErrorListener { mp, what, extra -> true }
-        } catch (e: Exception) {
-            // Log.e("CompassView", "Error loading media player", e)
-            mediaPlayer = null
-        }
-        // Enable haptic feedback
+        } catch (e: Exception) { mediaPlayer = null }
         isHapticFeedbackEnabled = true
+        catchThresholdPx = SQUIRREL_CATCH_THRESHOLD_DP * resources.displayMetrics.density
     }
 
     // --- Public Methods (setters) ---
@@ -207,92 +234,76 @@ class CompassView @JvmOverloads constructor(
 
     // --- Touch Event Handling ---
     override fun onTouchEvent(event: MotionEvent?): Boolean {
-        if (isCatLevelModeActive) return true // Block interaction during easter egg
+        if (isEasterEggModeActive) return true
 
         if (event == null) return super.onTouchEvent(event)
-        val touchX = event.x - width / 2f // Adjust coords relative to center
+        val touchX = event.x - width / 2f
         val touchY = event.y - height / 2f
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                // Cancel any pending single tap confirmation first
                 singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
                 singleTapRunnable = null
 
                 if (symbolBounds.contains(touchX, touchY)) {
                     isHoldingSymbol = true
-                    showSecretText = false // Reset secret text flag on new press
-
-                    // Define and post the long press runnable
+                    showSecretText = false
                     longPressRunnable = Runnable {
-                        // This runs after LONG_PRESS_DURATION_MS if still holding
-                        if (isHoldingSymbol) { // Double check if still holding
+                        if (isHoldingSymbol) {
                             showSecretText = true
-                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) // Feedback
-                            invalidate() // Redraw to show text
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            invalidate()
                         }
                     }
                     interactionHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION_MS)
-
-                    return true // Consume the DOWN event
+                    return true
                 }
-                // If DOWN is outside symbol, reset double tap timer
                 lastTapTimeMs = 0L
             }
 
             MotionEvent.ACTION_MOVE -> {
-                // Optional: If finger moves OFF the symbol while holding, cancel the long press
                 if (isHoldingSymbol && !symbolBounds.contains(touchX, touchY)) {
-                    resetSymbolInteractionState() // Cancels long press AND pending single tap
+                    resetSymbolInteractionState()
                 }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isHoldingSymbol) {
                     val currentTime = System.currentTimeMillis()
-                    val wasLongPress = showSecretText // Did the long press already trigger?
-                    val wasHolding = isHoldingSymbol // Remember hold state before resetting
+                    val wasLongPress = showSecretText
+                    val wasHolding = isHoldingSymbol
+                    resetSymbolInteractionState()
 
-                    // Always reset long press state first
-                    resetSymbolInteractionState() // This cancels long press timer and pending single tap
-
-                    // Only process tap/double tap if finger lifted UP on the symbol
                     if (event.action == MotionEvent.ACTION_UP && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
-                            // Long press finished, do nothing on UP
+                            // Long press release
                         } else if (currentTime - lastTapTimeMs <= DOUBLE_TAP_TIMEOUT_MS) {
-                            // --- Double tap ---
-                            lastTapTimeMs = 0L // Consume the double tap
-                            activateCatLevelMode() // Start easter egg
-                            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) // Haptic
-                            // DO NOT schedule a single tap runnable here
+                            // Double tap
+                            lastTapTimeMs = 0L
+                            activateEasterEggMode()
+                            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         } else {
-                            // --- Potential single tap ---
-                            lastTapTimeMs = currentTime // Record time for next potential tap
-
-                            // Schedule the single tap action with a delay
+                            // Potential single tap
+                            lastTapTimeMs = currentTime
                             singleTapRunnable = Runnable {
-                                showTrueNorth = !showTrueNorth // Toggle North mode
-                                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY) // Tap feedback
+                                showTrueNorth = !showTrueNorth
+                                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                                 invalidate()
-                                singleTapRunnable = null // Clear self after running
+                                singleTapRunnable = null
                             }
                             interactionHandler.postDelayed(singleTapRunnable!!, SINGLE_TAP_CONFIRM_DELAY_MS)
                         }
                     } else {
-                        // Finger lifted off symbol or ACTION_CANCEL - reset double tap timer
                         lastTapTimeMs = 0L
                     }
-                    // Consume the event if we started holding
                     if (wasHolding) return true
                 }
-                // Reset double tap timer if we weren't holding (e.g., tap outside)
                 lastTapTimeMs = 0L
             }
         }
-        // If event wasn't consumed above, pass it on
         return super.onTouchEvent(event)
     }
+
 
     // --- Reset Interaction State ---
     private fun resetSymbolInteractionState() {
@@ -309,25 +320,125 @@ class CompassView @JvmOverloads constructor(
         }
     }
 
-    // --- Activate/Deactivate Cat Level Mode ---
-    private fun activateCatLevelMode() {
-        if (isCatLevelModeActive) return
-        resetSymbolInteractionState() // Ensure other interactions stopped
-        isCatLevelModeActive = true
+    // --- Activate Easter Egg (Chase Mode) ---
+    private fun activateEasterEggMode() {
+        if (isEasterEggModeActive) return
+        resetSymbolInteractionState()
+
+        isEasterEggModeActive = true
+        isCaught = false
+        isFireworksActive = false
+        fireworksAnimator?.cancel()
+        fireworksParticles.clear()
+
+        // Calculate initial Cat position based on current tilt
+        val chaseContainerRadius = (min(width / 2f, height / 2f) * 0.90f) * 0.90f // Use estimated radius
+        val maxAngleMap = 45f
+        val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
+        val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
+        catPositionX = -chaseContainerRadius * sin(rollRad) * (90f / maxAngleMap)
+        catPositionY = chaseContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
+        // Clamp initial cat position
+        val catTotalOffset = sqrt(catPositionX.pow(2) + catPositionY.pow(2))
+        if (catTotalOffset > chaseContainerRadius) {
+            val scale = chaseContainerRadius / catTotalOffset
+            catPositionX *= scale
+            catPositionY *= scale
+        }
+
+
+        // Calculate opposite angle for squirrel start
+        val catAngleRad = atan2(catPositionY, catPositionX)
+        val squirrelAngleRad = catAngleRad + PI.toFloat()
+        val squirrelDist = chaseContainerRadius * 0.8f
+        squirrelPositionX = squirrelDist * cos(squirrelAngleRad)
+        squirrelPositionY = squirrelDist * sin(squirrelAngleRad)
+
+
+        lastCatMoveTimeMs = SystemClock.elapsedRealtime()
+
         if (mediaPlayer?.isPlaying == false) {
             try { mediaPlayer?.seekTo(0); mediaPlayer?.start() }
             catch (e: Exception) { /* Handle error */ }
         }
-        catLevelTimeoutRunnable = Runnable { deactivateCatLevelMode() }
-        interactionHandler.postDelayed(catLevelTimeoutRunnable!!, EASTER_EGG_DURATION_MS)
-        invalidate() // Initial draw in cat level mode
+
+        // No fixed timeout runnable needed anymore
+
+        invalidate()
     }
-    private fun deactivateCatLevelMode() {
-        isCatLevelModeActive = false
-        catLevelTimeoutRunnable?.let { interactionHandler.removeCallbacks(it) }
-        catLevelTimeoutRunnable = null
-        lastTapTimeMs = 0L // Reset tap timer after easter egg finishes
-        invalidate() // Redraw in normal mode
+
+    // --- Deactivate Easter Egg ---
+    private fun deactivateEasterEggMode() {
+        isEasterEggModeActive = false
+        // Timeout runnable removed
+        fireworksAnimator?.cancel()
+        isFireworksActive = false
+        lastTapTimeMs = 0L
+        invalidate()
+    }
+
+    // --- Start Fireworks Animation ---
+    private fun startFireworksAnimation(x: Float, y: Float) {
+        if (isFireworksActive) return
+
+        isFireworksActive = true
+        fireworksParticles.clear()
+
+        val maxRadiusPx = (min(width / 2f, height / 2f) * 0.90f) * FIREWORKS_MAX_RADIUS_FACTOR
+        for (i in 0 until FIREWORKS_PARTICLE_COUNT) {
+            val angle = Random.nextFloat() * 2 * PI.toFloat()
+            val speed = Random.nextFloat() * (FIREWORKS_MAX_SPEED_FACTOR - FIREWORKS_MIN_SPEED_FACTOR) + FIREWORKS_MIN_SPEED_FACTOR
+            val velocityX = cos(angle) * speed * maxRadiusPx / (FIREWORKS_DURATION_MS / 16f)
+            val velocityY = sin(angle) * speed * maxRadiusPx / (FIREWORKS_DURATION_MS / 16f)
+            val color = fireworkColors.random()
+            fireworksParticles.add(FireworkParticle(x, y, velocityX, velocityY, color))
+        }
+
+
+        fireworksAnimator?.cancel()
+        fireworksAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = FIREWORKS_DURATION_MS
+            interpolator = AccelerateInterpolator(1.5f)
+
+            addUpdateListener { animation ->
+                val progress = animation.animatedValue as Float
+                updateFireworks(progress)
+                invalidate()
+            }
+            addListener(object: AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    isFireworksActive = false
+                    fireworksParticles.clear()
+                    fireworksAnimator = null
+                    // --- END EASTER EGG HERE ---
+                    deactivateEasterEggMode()
+                }
+                override fun onAnimationCancel(animation: Animator) {
+                    isFireworksActive = false
+                    fireworksParticles.clear()
+                    fireworksAnimator = null
+                    if (isEasterEggModeActive) {
+                        deactivateEasterEggMode()
+                    }
+                }
+            })
+        }
+        fireworksAnimator?.start()
+    }
+
+    // --- Update Fireworks Particles ---
+    private fun updateFireworks(progress: Float) {
+        val iterator = fireworksParticles.iterator()
+        while(iterator.hasNext()){
+            val particle = iterator.next()
+            particle.x += particle.velocityX
+            particle.y += particle.velocityY
+            if (progress > 0.5f) {
+                particle.alpha = (255 * (1f - (progress - 0.5f) * 2)).toInt().coerceIn(0, 255)
+            }
+        }
+        // Remove particles that are fully faded? (Optional)
+        // fireworksParticles.removeAll { it.alpha == 0 }
     }
 
 
@@ -336,17 +447,29 @@ class CompassView @JvmOverloads constructor(
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        canvas.translate(cx, cy) // Origin is now center screen
+        canvas.translate(cx, cy)
 
         val edgeRadius = min(cx, cy)
         val mainRadius = edgeRadius * 0.90f
 
-        // 1) Draw Bezel - Rotated internally for drawing ticks/labels
+        // 1) Draw Bezel (Always)
         canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
 
-        // 2) Draw North Needle & Go-To Needle (Hide if cat level active)
-        if (!isCatLevelModeActive) {
-            // Calculate North heading relative to screen top
+        // 3) Draw Bearing Marker (Always)
+        drawBearingMarker(canvas, edgeRadius)
+
+
+        if (isEasterEggModeActive) {
+            // --- Draw Easter Egg Scene ---
+            drawChaseScene(canvas, mainRadius)
+            // --- Draw Fireworks if active ---
+            if (isFireworksActive) {
+                drawFireworks(canvas)
+            }
+
+        } else {
+            // --- Draw Normal Compass Elements ---
+            // 2) Draw North Needle & Go-To Needle
             val headingToShow: Float
             val currentNeedlePaint: Paint
             if (showTrueNorth) {
@@ -356,34 +479,23 @@ class CompassView @JvmOverloads constructor(
                 headingToShow = magneticNeedleDeg
                 currentNeedlePaint = magneticNeedlePaint
             }
-            // Rotate canvas so UP points towards North
             canvas.withRotation(-headingToShow) {
                 drawNeedle(this, mainRadius, currentNeedlePaint)
             }
-
-            // Draw Go-To Needle (Points straight UP towards blue marker)
-            // NO specific rotation needed here, drawn directly on translated canvas
             drawGoToNeedle(canvas, mainRadius, goToNeedlePaint)
-        }
 
-        // 3) Draw Bearing Marker (Fixed at screen top)
-        drawBearingMarker(canvas, edgeRadius)
+            // 4) Draw Static Mode Symbol
+            drawModeSymbol(canvas, mainRadius)
 
-        // 4) Draw Mode Symbol (handles cat level mode internally)
-        drawModeSymbol(canvas, mainRadius)
-
-        // 5) Draw Bubble Level & Accuracy Indicator (Hide if cat level active)
-        if (!isCatLevelModeActive) {
+            // 5) Draw Bubble Level & Accuracy Indicator
             drawBubbleLevel(canvas, mainRadius)
             drawAccuracyIndicator(canvas, mainRadius)
+
+            // 6) Draw Readouts
+            drawReadouts(canvas)
         }
 
-        // 6) Draw Readouts (Hide if cat level active)
-        if (!isCatLevelModeActive) {
-            drawReadouts(canvas) // Uses colored BRG line internally now
-        }
-
-        // 7) Draw Secret Text Overlay
+        // 7) Draw Secret Text Overlay (Always drawn on top if active)
         if (showSecretText) {
             drawSecretTextOverlay(canvas, mainRadius)
         }
@@ -435,7 +547,10 @@ class CompassView @JvmOverloads constructor(
         canvas.drawLine(0f, -innerNeedleRadius, 0f, -outerNeedleRadius, paint)
     }
 
+    // Only draws the static symbol
     private fun drawModeSymbol(canvas: Canvas, radius: Float) {
+        if (isEasterEggModeActive) return
+
         val currentSymbol: String
         val currentPaint: Paint
         if (showTrueNorth) {
@@ -451,31 +566,16 @@ class CompassView @JvmOverloads constructor(
         val textWidth = currentPaint.measureText(currentSymbol)
         val yOffset = textHeight / 2f - textBounds.bottom
 
-        if (isCatLevelModeActive) {
-            val catLevelContainerRadius = (radius * 0.35f) * CAT_LEVEL_SCALE
-            val maxAngleMap = 45f
-            canvas.drawCircle(0f, 0f, catLevelContainerRadius, catLevelBoundaryPaint)
-            val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
-            val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
-            var catOffsetX = -catLevelContainerRadius * sin(rollRad) * (90f / maxAngleMap)
-            var catOffsetY = catLevelContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
-            val totalOffset = sqrt(catOffsetX.pow(2) + catOffsetY.pow(2))
-            if (totalOffset > catLevelContainerRadius) {
-                val scale = catLevelContainerRadius / totalOffset
-                catOffsetX *= scale
-                catOffsetY *= scale
-            }
-            canvas.drawText(currentSymbol, catOffsetX, catOffsetY + yOffset, currentPaint)
-        } else {
-            val symbolX = -radius * 0.60f
-            val symbolY = 0f
-            canvas.drawText(currentSymbol, symbolX, symbolY + yOffset, currentPaint)
-            val clickLeft = symbolX - textWidth / 2f - symbolClickPadding
-            val clickTop = symbolY + yOffset - textHeight / 2f - symbolClickPadding
-            val clickRight = symbolX + textWidth / 2f + symbolClickPadding
-            val clickBottom = symbolY + yOffset + textHeight / 2f + symbolClickPadding
-            symbolBounds.set(clickLeft, clickTop, clickRight, clickBottom)
-        }
+        val symbolX = -radius * 0.60f // Static X position
+        val symbolY = 0f             // Static Y position
+        canvas.drawText(currentSymbol, symbolX, symbolY + yOffset, currentPaint)
+
+        // Update clickable bounds ONLY when static
+        val clickLeft = symbolX - textWidth / 2f - symbolClickPadding
+        val clickTop = symbolY + yOffset - textHeight / 2f - symbolClickPadding
+        val clickRight = symbolX + textWidth / 2f + symbolClickPadding
+        val clickBottom = symbolY + yOffset + textHeight / 2f + symbolClickPadding
+        symbolBounds.set(clickLeft, clickTop, clickRight, clickBottom)
     }
 
     private fun drawBubbleLevel(canvas: Canvas, radius: Float) {
@@ -543,17 +643,15 @@ class CompassView @JvmOverloads constructor(
     }
 
     private fun drawGoToNeedle(canvas: Canvas, radius: Float, paint: Paint) {
-        // Start at 65%, End at 80% of mainRadius
         val finalInnerRadius = radius * 0.65f
         val finalOuterRadius = radius * 0.80f
-        // Draw directly on the provided canvas (already translated to center)
         canvas.drawLine(0f, -finalInnerRadius, 0f, -finalOuterRadius, paint)
     }
 
     private fun drawAccuracyIndicator(canvas: Canvas, radius: Float) {
         val indicatorRadius = radius * 0.05f
-        val indicatorX = radius * 0.60f // Same X as bubble level center
-        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f // Below bubble level with padding
+        val indicatorX = radius * 0.60f
+        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f
 
         val paintToUse = when (sensorAccuracyLevel) {
             SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> accuracyPaintHigh
@@ -564,6 +662,97 @@ class CompassView @JvmOverloads constructor(
         canvas.drawCircle(indicatorX, indicatorY, indicatorRadius, paintToUse)
     }
 
+    // --- Helper to draw the chase scene ---
+    private fun drawChaseScene(canvas: Canvas, radius: Float) { // radius is mainRadius
+        // Use larger chase area
+        val chaseContainerRadius = radius * 0.90f
+        val maxAngleMap = 45f
+
+        // Optional: Draw boundary circle for debugging
+        // canvas.drawCircle(0f, 0f, chaseContainerRadius, catLevelBoundaryPaint)
+
+        // Cat Calculation
+        val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
+        val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
+        var targetCatX = -chaseContainerRadius * sin(rollRad) * (90f / maxAngleMap)
+        var targetCatY = chaseContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
+        val catTotalOffset = sqrt(targetCatX.pow(2) + targetCatY.pow(2))
+        if (catTotalOffset > chaseContainerRadius) {
+            val scale = chaseContainerRadius / catTotalOffset
+            targetCatX *= scale
+            targetCatY *= scale
+        }
+        val dxCat = targetCatX - catPositionX
+        val dyCat = targetCatY - catPositionY
+        val distMovedCat = sqrt(dxCat*dxCat + dyCat*dyCat)
+        val currentTime = SystemClock.elapsedRealtime()
+        if (distMovedCat > 2.0f) { lastCatMoveTimeMs = currentTime }
+        catPositionX = targetCatX
+        catPositionY = targetCatY
+
+        // Squirrel Calculation
+        if (!isCaught) {
+            val deltaX = catPositionX - squirrelPositionX
+            val deltaY = catPositionY - squirrelPositionY
+            val distance = sqrt(deltaX.pow(2) + deltaY.pow(2))
+
+            if (distance < catchThresholdPx) {
+                isCaught = true
+                squirrelPositionX = catPositionX
+                squirrelPositionY = catPositionY
+                performHapticFeedback(HapticFeedbackConstants.REJECT)
+                startFireworksAnimation(catPositionX, catPositionY) // Trigger fireworks
+            } else {
+                if (currentTime - lastCatMoveTimeMs > CAT_MOVE_TIMEOUT_MS) {
+                    if (distance > 0) {
+                        val moveX = deltaX / distance * (distance * SQUIRREL_SPEED_FACTOR)
+                        val moveY = deltaY / distance * (distance * SQUIRREL_SPEED_FACTOR)
+                        squirrelPositionX += moveX
+                        squirrelPositionY += moveY
+                    }
+                }
+            }
+        } else { // Stay caught
+            squirrelPositionX = catPositionX
+            squirrelPositionY = catPositionY
+        }
+
+        // Drawing Symbols
+        val currentCatSymbol: String
+        val currentCatPaint: Paint
+        if (showTrueNorth) { currentCatSymbol = trueNorthSymbol; currentCatPaint = catSymbolTrueNorthPaint }
+        else { currentCatSymbol = magneticNorthSymbol; currentCatPaint = catSymbolMagneticPaint }
+
+        val catTextBounds = Rect(); currentCatPaint.getTextBounds(currentCatSymbol, 0, currentCatSymbol.length, catTextBounds)
+        val catYOffset = catTextBounds.height() / 2f - catTextBounds.bottom
+        val squirrelTextBounds = Rect(); squirrelPaint.getTextBounds(squirrelSymbol, 0, squirrelSymbol.length, squirrelTextBounds)
+        val squirrelYOffset = squirrelTextBounds.height() / 2f - squirrelTextBounds.bottom
+
+        canvas.drawText(currentCatSymbol, catPositionX, catPositionY + catYOffset, currentCatPaint)
+        canvas.drawText(squirrelSymbol, squirrelPositionX, squirrelPositionY + squirrelYOffset, squirrelPaint)
+    }
+
+    // --- Helper to draw particle-based fireworks ---
+    private fun drawFireworks(canvas: Canvas) {
+        if (!isFireworksActive || fireworksParticles.isEmpty()) return
+
+        for (particle in fireworksParticles) {
+            fireworksParticlePaint.color = particle.color
+            fireworksParticlePaint.alpha = particle.alpha
+            canvas.drawCircle(particle.x, particle.y, fireworksParticlePaint.strokeWidth / 2f, fireworksParticlePaint)
+        }
+    }
+
+    // --- Data class for firework particles ---
+    data class FireworkParticle(
+        var x: Float,
+        var y: Float,
+        val velocityX: Float,
+        val velocityY: Float,
+        val color: Int,
+        var alpha: Int = 255
+    )
+
     // --- Resource Cleanup ---
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
@@ -573,6 +762,9 @@ class CompassView @JvmOverloads constructor(
         interactionHandler.removeCallbacksAndMessages(null)
         longPressRunnable = null
         singleTapRunnable = null
-        catLevelTimeoutRunnable = null
+        // easterEggTimeoutRunnable removed
+        // Cancel fireworks animator
+        fireworksAnimator?.cancel()
+        fireworksAnimator = null
     }
 }
