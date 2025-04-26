@@ -39,7 +39,7 @@ class CompassView @JvmOverloads constructor(
     private val CAT_MOVE_TIMEOUT_MS = 400L
     // Fireworks Constants
     private val FIREWORKS_DURATION_MS = 3000L // 3 seconds duration
-    private val FIREWORKS_PARTICLE_COUNT = 50 // Number of particles per burst
+    private val FIREWORKS_PARTICLE_COUNT = 60 // Number of particles per burst
     private val FIREWORKS_MAX_RADIUS_FACTOR = 0.4f // Max distance particles travel relative to mainRadius
     private val FIREWORKS_MIN_SPEED_FACTOR = 0.8f // Min initial speed factor
     private val FIREWORKS_MAX_SPEED_FACTOR = 1.4f // Max initial speed factor
