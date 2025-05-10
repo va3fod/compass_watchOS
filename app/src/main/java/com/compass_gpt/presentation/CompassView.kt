@@ -20,8 +20,7 @@ import android.os.SystemClock // Import SystemClock for elapsedRealtime
 import android.animation.Animator // Base class for AnimatorListenerAdapter
 import android.animation.AnimatorListenerAdapter // To know when animation ends
 import android.animation.ValueAnimator // For fireworks animation
-import android.view.animation.AccelerateInterpolator // For fireworks effect
-import kotlin.random.Random // For random firework colors
+import android.view.animation.LinearInterpolator // For simpler fireworks
 
 
 class CompassView @JvmOverloads constructor(
@@ -31,18 +30,14 @@ class CompassView @JvmOverloads constructor(
     // --- Constants ---
     private val LONG_PRESS_DURATION_MS = 3000L
     private val DOUBLE_TAP_TIMEOUT_MS = 300L
-    // Easter Egg duration is now controlled by FIREWORKS_DURATION_MS
     private val SINGLE_TAP_CONFIRM_DELAY_MS = DOUBLE_TAP_TIMEOUT_MS + 50L
     // Easter Egg Chase Constants
     private val SQUIRREL_CATCH_THRESHOLD_DP = 15f
     private val SQUIRREL_SPEED_FACTOR = 0.02f // Slower squirrel
     private val CAT_MOVE_TIMEOUT_MS = 400L
     // Fireworks Constants
-    private val FIREWORKS_DURATION_MS = 3000L // 3 seconds duration
-    private val FIREWORKS_PARTICLE_COUNT = 60 // Number of particles per burst
-    private val FIREWORKS_MAX_RADIUS_FACTOR = 0.4f // Max distance particles travel relative to mainRadius
-    private val FIREWORKS_MIN_SPEED_FACTOR = 0.8f // Min initial speed factor
-    private val FIREWORKS_MAX_SPEED_FACTOR = 1.4f // Max initial speed factor
+    private val FIREWORKS_ANIMATION_DURATION_MS = 3000L // Duration of the fireworks animation itself
+    private val FIREWORKS_MAX_RADIUS_FACTOR = 0.45f // Max length of radiating lines
 
 
     // --- Paints ---
@@ -141,15 +136,17 @@ class CompassView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
     }
-    private val fireworksParticlePaint = Paint().apply {
-        // Color will be set per particle
-        strokeWidth = 5f // Make particles visible
-        style = Paint.Style.FILL // Draw dots/circles
+    private val fireworksPaint = Paint().apply {
+        // Color will be set in drawFireworks
+        strokeWidth = 6f // Thicker lines
+        style = Paint.Style.STROKE
         isAntiAlias = true
         strokeCap = Paint.Cap.ROUND
     }
     private val fireworkColors = listOf(
-        Color.YELLOW, Color.RED, Color.WHITE, Color.CYAN, Color.MAGENTA, Color.GREEN
+        Color.YELLOW, Color.RED, Color.WHITE, Color.CYAN, Color.MAGENTA, Color.GREEN,
+        "#FF8C00".toColorInt(), // DarkOrange
+        "#FF1493".toColorInt()  // DeepPink
     )
 
 
@@ -158,7 +155,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private val squirrelSymbol = "🐿️"   // ha ha ha
+    private val squirrelSymbol = "🐿️"
 
     // --- State Variables ---
     private var magneticNeedleDeg = 0f
@@ -180,7 +177,7 @@ class CompassView @JvmOverloads constructor(
     private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
     private val interactionHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
-    // Timeout runnable removed, handled by fireworks end
+    // Timeout runnable removed
     private var singleTapRunnable: Runnable? = null
     private var mediaPlayer: MediaPlayer? = null
     private var catPositionX: Float = 0f
@@ -191,8 +188,11 @@ class CompassView @JvmOverloads constructor(
     private var lastCatMoveTimeMs: Long = 0L
     private val catchThresholdPx: Float
     private var isFireworksActive: Boolean = false
-    private val fireworksParticles = mutableListOf<FireworkParticle>()
+    private var fireworksCenterX: Float = 0f
+    private var fireworksCenterY: Float = 0f
+    private var fireworksProgress: Float = 0f
     private var fireworksAnimator: ValueAnimator? = null
+    // fireworksParticles list removed
 
 
     // --- Initialization ---
@@ -329,10 +329,10 @@ class CompassView @JvmOverloads constructor(
         isCaught = false
         isFireworksActive = false
         fireworksAnimator?.cancel()
-        fireworksParticles.clear()
+        // fireworksParticles.clear() // No longer needed for line fireworks
 
         // Calculate initial Cat position based on current tilt
-        val chaseContainerRadius = (min(width / 2f, height / 2f) * 0.90f) * 0.90f // Use estimated radius
+        val chaseContainerRadius = (min(width / 2f, height / 2f) * 0.90f) * 0.90f
         val maxAngleMap = 45f
         val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
         val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
@@ -346,14 +346,12 @@ class CompassView @JvmOverloads constructor(
             catPositionY *= scale
         }
 
-
         // Calculate opposite angle for squirrel start
         val catAngleRad = atan2(catPositionY, catPositionX)
         val squirrelAngleRad = catAngleRad + PI.toFloat()
         val squirrelDist = chaseContainerRadius * 0.8f
         squirrelPositionX = squirrelDist * cos(squirrelAngleRad)
         squirrelPositionY = squirrelDist * sin(squirrelAngleRad)
-
 
         lastCatMoveTimeMs = SystemClock.elapsedRealtime()
 
@@ -362,62 +360,47 @@ class CompassView @JvmOverloads constructor(
             catch (e: Exception) { /* Handle error */ }
         }
 
-        // No fixed timeout runnable needed anymore
-
+        // Easter egg ends when fireworks animation finishes
         invalidate()
     }
 
     // --- Deactivate Easter Egg ---
     private fun deactivateEasterEggMode() {
         isEasterEggModeActive = false
-        // Timeout runnable removed
-        fireworksAnimator?.cancel()
+        fireworksAnimator?.cancel() // Ensure fireworks animation is stopped
         isFireworksActive = false
         lastTapTimeMs = 0L
         invalidate()
     }
 
-    // --- Start Fireworks Animation ---
+    // --- Start Fireworks Animation (Reverted to simpler lines) ---
     private fun startFireworksAnimation(x: Float, y: Float) {
         if (isFireworksActive) return
 
         isFireworksActive = true
-        fireworksParticles.clear()
-
-        val maxRadiusPx = (min(width / 2f, height / 2f) * 0.90f) * FIREWORKS_MAX_RADIUS_FACTOR
-        for (i in 0 until FIREWORKS_PARTICLE_COUNT) {
-            val angle = Random.nextFloat() * 2 * PI.toFloat()
-            val speed = Random.nextFloat() * (FIREWORKS_MAX_SPEED_FACTOR - FIREWORKS_MIN_SPEED_FACTOR) + FIREWORKS_MIN_SPEED_FACTOR
-            val velocityX = cos(angle) * speed * maxRadiusPx / (FIREWORKS_DURATION_MS / 16f)
-            val velocityY = sin(angle) * speed * maxRadiusPx / (FIREWORKS_DURATION_MS / 16f)
-            val color = fireworkColors.random()
-            fireworksParticles.add(FireworkParticle(x, y, velocityX, velocityY, color))
-        }
-
+        fireworksCenterX = x
+        fireworksCenterY = y
+        fireworksProgress = 0f
 
         fireworksAnimator?.cancel()
         fireworksAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = FIREWORKS_DURATION_MS
-            interpolator = AccelerateInterpolator(1.5f)
+            duration = FIREWORKS_ANIMATION_DURATION_MS
+            interpolator = LinearInterpolator() // Simpler interpolator for lines
 
             addUpdateListener { animation ->
-                val progress = animation.animatedValue as Float
-                updateFireworks(progress)
+                fireworksProgress = animation.animatedValue as Float
                 invalidate()
             }
             addListener(object: AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     isFireworksActive = false
-                    fireworksParticles.clear()
                     fireworksAnimator = null
-                    // --- END EASTER EGG HERE ---
-                    deactivateEasterEggMode()
+                    deactivateEasterEggMode() // End easter egg after fireworks
                 }
                 override fun onAnimationCancel(animation: Animator) {
                     isFireworksActive = false
-                    fireworksParticles.clear()
                     fireworksAnimator = null
-                    if (isEasterEggModeActive) {
+                    if (isEasterEggModeActive) { // If mode was active, ensure it's deactivated
                         deactivateEasterEggMode()
                     }
                 }
@@ -426,20 +409,7 @@ class CompassView @JvmOverloads constructor(
         fireworksAnimator?.start()
     }
 
-    // --- Update Fireworks Particles ---
-    private fun updateFireworks(progress: Float) {
-        val iterator = fireworksParticles.iterator()
-        while(iterator.hasNext()){
-            val particle = iterator.next()
-            particle.x += particle.velocityX
-            particle.y += particle.velocityY
-            if (progress > 0.5f) {
-                particle.alpha = (255 * (1f - (progress - 0.5f) * 2)).toInt().coerceIn(0, 255)
-            }
-        }
-        // Remove particles that are fully faded? (Optional)
-        // fireworksParticles.removeAll { it.alpha == 0 }
-    }
+    // updateFireworks function for particle physics REMOVED
 
 
     // --- Drawing Logic ---
@@ -464,7 +434,8 @@ class CompassView @JvmOverloads constructor(
             drawChaseScene(canvas, mainRadius)
             // --- Draw Fireworks if active ---
             if (isFireworksActive) {
-                drawFireworks(canvas)
+                // Pass mainRadius to scale fireworks
+                drawFireworks(canvas, mainRadius)
             }
 
         } else {
@@ -643,15 +614,17 @@ class CompassView @JvmOverloads constructor(
     }
 
     private fun drawGoToNeedle(canvas: Canvas, radius: Float, paint: Paint) {
+        // Start at 65%, End at 80% of mainRadius
         val finalInnerRadius = radius * 0.65f
         val finalOuterRadius = radius * 0.80f
+        // Draw directly on the provided canvas (already translated to center)
         canvas.drawLine(0f, -finalInnerRadius, 0f, -finalOuterRadius, paint)
     }
 
     private fun drawAccuracyIndicator(canvas: Canvas, radius: Float) {
         val indicatorRadius = radius * 0.05f
-        val indicatorX = radius * 0.60f
-        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f
+        val indicatorX = radius * 0.60f // Same X as bubble level center
+        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f // Below bubble level with padding
 
         val paintToUse = when (sensorAccuracyLevel) {
             SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> accuracyPaintHigh
@@ -664,14 +637,14 @@ class CompassView @JvmOverloads constructor(
 
     // --- Helper to draw the chase scene ---
     private fun drawChaseScene(canvas: Canvas, radius: Float) { // radius is mainRadius
-        // Use larger chase area
+        // --- Use larger chase area ---
         val chaseContainerRadius = radius * 0.90f
         val maxAngleMap = 45f
 
         // Optional: Draw boundary circle for debugging
         // canvas.drawCircle(0f, 0f, chaseContainerRadius, catLevelBoundaryPaint)
 
-        // Cat Calculation
+        // --- Cat Calculation (Position based on tilt within larger area) ---
         val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
         val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
         var targetCatX = -chaseContainerRadius * sin(rollRad) * (90f / maxAngleMap)
@@ -690,7 +663,7 @@ class CompassView @JvmOverloads constructor(
         catPositionX = targetCatX
         catPositionY = targetCatY
 
-        // Squirrel Calculation
+        // --- Squirrel Calculation ---
         if (!isCaught) {
             val deltaX = catPositionX - squirrelPositionX
             val deltaY = catPositionY - squirrelPositionY
@@ -701,8 +674,10 @@ class CompassView @JvmOverloads constructor(
                 squirrelPositionX = catPositionX
                 squirrelPositionY = catPositionY
                 performHapticFeedback(HapticFeedbackConstants.REJECT)
-                startFireworksAnimation(catPositionX, catPositionY) // Trigger fireworks
+                startFireworksAnimation(0f, 0f) // Trigger fireworks from screen center
+
             } else {
+                // Move squirrel (slower) only if cat hasn't moved recently
                 if (currentTime - lastCatMoveTimeMs > CAT_MOVE_TIMEOUT_MS) {
                     if (distance > 0) {
                         val moveX = deltaX / distance * (distance * SQUIRREL_SPEED_FACTOR)
@@ -710,48 +685,64 @@ class CompassView @JvmOverloads constructor(
                         squirrelPositionX += moveX
                         squirrelPositionY += moveY
                     }
-                }
+                } // Else: Squirrel waits
             }
         } else { // Stay caught
             squirrelPositionX = catPositionX
             squirrelPositionY = catPositionY
         }
 
-        // Drawing Symbols
-        val currentCatSymbol: String
-        val currentCatPaint: Paint
-        if (showTrueNorth) { currentCatSymbol = trueNorthSymbol; currentCatPaint = catSymbolTrueNorthPaint }
-        else { currentCatSymbol = magneticNorthSymbol; currentCatPaint = catSymbolMagneticPaint }
 
-        val catTextBounds = Rect(); currentCatPaint.getTextBounds(currentCatSymbol, 0, currentCatSymbol.length, catTextBounds)
-        val catYOffset = catTextBounds.height() / 2f - catTextBounds.bottom
-        val squirrelTextBounds = Rect(); squirrelPaint.getTextBounds(squirrelSymbol, 0, squirrelSymbol.length, squirrelTextBounds)
-        val squirrelYOffset = squirrelTextBounds.height() / 2f - squirrelTextBounds.bottom
+        // --- Drawing Symbols ---
+        // Hide symbols if fireworks are very active and have started and are past the initial burst.
+        // Draw them if fireworks haven't started or are almost done.
+        val fireworksMidPoint = FIREWORKS_ANIMATION_DURATION_MS / 3f
+        val drawSymbolsDuringFireworks = !isFireworksActive || (fireworksAnimator?.currentPlayTime ?: 0 < fireworksMidPoint ||
+                fireworksAnimator?.currentPlayTime ?: 0 > FIREWORKS_ANIMATION_DURATION_MS - fireworksMidPoint)
 
-        canvas.drawText(currentCatSymbol, catPositionX, catPositionY + catYOffset, currentCatPaint)
-        canvas.drawText(squirrelSymbol, squirrelPositionX, squirrelPositionY + squirrelYOffset, squirrelPaint)
-    }
+        if (drawSymbolsDuringFireworks) {
+            val currentCatSymbol: String
+            val currentCatPaint: Paint
+            if (showTrueNorth) { currentCatSymbol = trueNorthSymbol; currentCatPaint = catSymbolTrueNorthPaint }
+            else { currentCatSymbol = magneticNorthSymbol; currentCatPaint = catSymbolMagneticPaint }
 
-    // --- Helper to draw particle-based fireworks ---
-    private fun drawFireworks(canvas: Canvas) {
-        if (!isFireworksActive || fireworksParticles.isEmpty()) return
+            val catTextBounds = Rect(); currentCatPaint.getTextBounds(currentCatSymbol, 0, currentCatSymbol.length, catTextBounds)
+            val catYOffset = catTextBounds.height() / 2f - catTextBounds.bottom
+            val squirrelTextBounds = Rect(); squirrelPaint.getTextBounds(squirrelSymbol, 0, squirrelSymbol.length, squirrelTextBounds)
+            val squirrelYOffset = squirrelTextBounds.height() / 2f - squirrelTextBounds.bottom
 
-        for (particle in fireworksParticles) {
-            fireworksParticlePaint.color = particle.color
-            fireworksParticlePaint.alpha = particle.alpha
-            canvas.drawCircle(particle.x, particle.y, fireworksParticlePaint.strokeWidth / 2f, fireworksParticlePaint)
+            canvas.drawText(currentCatSymbol, catPositionX, catPositionY + catYOffset, currentCatPaint)
+            canvas.drawText(squirrelSymbol, squirrelPositionX, squirrelPositionY + squirrelYOffset, squirrelPaint)
         }
     }
 
-    // --- Data class for firework particles ---
-    data class FireworkParticle(
-        var x: Float,
-        var y: Float,
-        val velocityX: Float,
-        val velocityY: Float,
-        val color: Int,
-        var alpha: Int = 255
-    )
+    // --- REVERTED: Helper to draw simple radiating line fireworks ---
+    private fun drawFireworks(canvas: Canvas, radius: Float) { // radius is mainRadius
+        if (!isFireworksActive) return
+
+        val numLines = 12 // More lines for fuller effect
+        val maxLineLength = radius * (FIREWORKS_MAX_RADIUS_FACTOR * 1.5f) // Make lines longer
+        val currentLength = maxLineLength * fireworksProgress // Length grows
+
+        // Fade out alpha
+        val alpha = ((1.0f - fireworksProgress) * 255).toInt().coerceIn(0, 255)
+        fireworksPaint.alpha = alpha
+        // fireworksPaint.strokeWidth = 6f // Already set in paint init
+
+        for (i in 0 until numLines) {
+            // --- CORRECTED: Use fireworkColors list ---
+            fireworksPaint.color = fireworkColors[i % fireworkColors.size]
+
+            val angle = (360f / numLines) * i
+            val angleRad = Math.toRadians(angle.toDouble()).toFloat()
+            // Start lines from fireworksCenterX/Y (which is screen center if called with 0,0)
+            val endX = fireworksCenterX + currentLength * cos(angleRad)
+            val endY = fireworksCenterY + currentLength * sin(angleRad)
+            canvas.drawLine(fireworksCenterX, fireworksCenterY, endX, endY, fireworksPaint)
+        }
+    }
+
+    // Removed FireworkParticle data class and updateFireworks physics function
 
     // --- Resource Cleanup ---
     override fun onDetachedFromWindow() {
