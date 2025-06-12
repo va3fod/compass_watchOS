@@ -75,14 +75,7 @@ ProNavi Compass transforms your Google Pixel Watch (and other compatible Wear OS
 *   Night Mode / Dimmed Theme
 *   Sun Azimuth & Altitude Display
 
----
-*(Consider adding a License section if you are sharing the source code, e.g., MIT, Apache 2.0)*
 
-**Example License Section (if applicable):**
-```markdown
-## License
-
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
 
 
 
