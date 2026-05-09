@@ -2,7 +2,6 @@ package com.compass_gpt.presentation
 
 import android.Manifest
 import android.app.Activity
-import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -24,31 +23,36 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.abs
 
 class MainActivity : Activity(), SensorEventListener {
 
+    // --- Constants ---
+    private val locationPermissionRequestCode = 1001
+    private val alpha = 0.25f
+
+    // --- UI ---
     private lateinit var compassView: CompassView
+
+    // --- Sensors ---
     private lateinit var sensorManager: SensorManager
     private var rotationVectorSensor: Sensor? = null
     private val rotationMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
-    private var filteredAzimuthDeg = 0f
-    private var bezelRotationDeg = 0f
-    private val ALPHA = 0.25f
 
-    // --- State for CompassView ---
+    // --- State ---
+    private var filteredAzimuthDeg = 0f
+    private var currentPitchDeg = 0f
+    private var currentRollDeg = 0f
+    private var currentSensorAccuracy: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
+    private var bezelRotationDeg = 0f
+
+    // --- Location ---
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
     private var declinationDeg = 0f
     private var currentSpeedKmh = 0f
     private var currentAltitudeM = 0f
     private var lastKnownLocation: Location? = null
-    private val LOCATION_PERMISSION_REQUEST_CODE = 1001
-    private var currentPitchDeg = 0f
-    private var currentRollDeg = 0f
-    private var currentSensorAccuracy: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,12 +65,13 @@ class MainActivity : Activity(), SensorEventListener {
             compassView,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
         )
 
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+
         if (rotationVectorSensor == null) {
             Toast.makeText(this, "Core sensors not found!", Toast.LENGTH_LONG).show()
         } else {
@@ -84,6 +89,10 @@ class MainActivity : Activity(), SensorEventListener {
         rotationVectorSensor?.also { sensor ->
             sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
         }
+
+        // FORCE a redraw when returning from a paused state (like dismissing a permission dialog)
+        compassView.invalidate()
+
         if (checkLocationPermission()) {
             requestLocationUpdatesInternal()
         }
@@ -95,67 +104,40 @@ class MainActivity : Activity(), SensorEventListener {
         fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
-            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-            SensorManager.getOrientation(rotationMatrix, orientationAngles)
-
-            val azimuthRad = orientationAngles[0]
-            val pitchRad = orientationAngles[1]
-            val rollRad = orientationAngles[2]
-
-            val azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
-            var delta = azimuthDeg - filteredAzimuthDeg
-            while (delta <= -180f) delta += 360f
-            while (delta > 180f) delta -= 360f
-            filteredAzimuthDeg += ALPHA * delta
-            filteredAzimuthDeg = (filteredAzimuthDeg % 360f + 360f) % 360f
-
-            currentPitchDeg = Math.toDegrees(pitchRad.toDouble()).toFloat()
-            currentRollDeg = Math.toDegrees(rollRad.toDouble()).toFloat()
-
-            compassView.setSensorData(filteredAzimuthDeg, currentPitchDeg, currentRollDeg)
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        if (accuracy != currentSensorAccuracy) {
-            currentSensorAccuracy = accuracy
-            compassView.setSensorAccuracy(accuracy)
-        }
-    }
-
-    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
-        if (event?.action == MotionEvent.ACTION_SCROLL && event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)) {
-            val delta = -event.getAxisValue(MotionEvent.AXIS_SCROLL)
-            bezelRotationDeg = (bezelRotationDeg + delta * 4.0f % 360f + 360f) % 360f
-            compassView.setBezelRotation(bezelRotationDeg)
-            return true
-        }
-        return super.onGenericMotionEvent(event)
-    }
-
-    // --- CORRECTED: Full implementations for GPS helper functions ---
     private fun checkLocationPermission(): Boolean {
-        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return ActivityCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun requestLocationPermission() {
-        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_PERMISSION_REQUEST_CODE)
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+            locationPermissionRequestCode,
+        )
     }
 
     private fun startLocationUpdates() {
-        if (!checkLocationPermission()) { requestLocationPermission() }
-        else { requestLocationUpdatesInternal() }
+        if (!checkLocationPermission()) {
+            requestLocationPermission()
+        } else {
+            requestLocationUpdatesInternal()
+        }
     }
 
     private fun requestLocationUpdatesInternal() {
         if (!checkLocationPermission()) return
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L).build()
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L)
+                .setMinUpdateIntervalMillis(5000L)
+                .build()
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-        } catch (secEx: SecurityException) {
+        } catch (_: SecurityException) {
             Toast.makeText(this, "Location permission error.", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {
+            // Added broader catch block in case OS has globally disabled location services
+            Toast.makeText(this, "Location services unavailable.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -174,26 +156,78 @@ class MainActivity : Activity(), SensorEventListener {
         lastKnownLocation?.let { location ->
             currentSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
             currentAltitudeM = if (location.hasAltitude()) location.altitude.toFloat() else 0f
-            val geoField = GeomagneticField(location.latitude.toFloat(), location.longitude.toFloat(), location.altitude.toFloat(), System.currentTimeMillis())
+            val geoField = GeomagneticField(
+                location.latitude.toFloat(), location.longitude.toFloat(),
+                location.altitude.toFloat(), System.currentTimeMillis(),
+            )
             declinationDeg = geoField.declination
         }
+
         val now = Calendar.getInstance()
         val localFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
         localFmt.timeZone = now.timeZone
         val localStr = localFmt.format(now.time)
+
         val utcFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
         utcFmt.timeZone = TimeZone.getTimeZone("UTC")
         val utcStr = utcFmt.format(now.time)
+
         compassView.setGpsData(currentSpeedKmh, currentAltitudeM, declinationDeg, localStr, utcStr)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
+            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+            SensorManager.getOrientation(rotationMatrix, orientationAngles)
+
+            val azimuthRad = orientationAngles[0]
+            val pitchRad = orientationAngles[1]
+            val rollRad = orientationAngles[2]
+
+            val azimuthDeg = Math.toDegrees(azimuthRad.toDouble()).toFloat()
+            var delta = azimuthDeg - filteredAzimuthDeg
+            while (delta <= -180f) delta += 360f
+            while (delta > 180f) delta -= 360f
+            filteredAzimuthDeg += alpha * delta
+            filteredAzimuthDeg = ((filteredAzimuthDeg % 360f) + 360f) % 360f
+
+            currentPitchDeg = Math.toDegrees(pitchRad.toDouble()).toFloat()
+            currentRollDeg = Math.toDegrees(rollRad.toDouble()).toFloat()
+
+            compassView.setSensorData(filteredAzimuthDeg, currentPitchDeg, currentRollDeg)
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        if ((sensor?.type == Sensor.TYPE_ROTATION_VECTOR) && (accuracy != currentSensorAccuracy)) {
+            currentSensorAccuracy = accuracy
+            compassView.setSensorAccuracy(accuracy)
+        }
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
+        if ((event?.action == MotionEvent.ACTION_SCROLL) &&
+            event.isFromSource(InputDevice.SOURCE_ROTARY_ENCODER)
+        ) {
+            val delta = -event.getAxisValue(MotionEvent.AXIS_SCROLL)
+            val sensitivity = 4.0f
+            bezelRotationDeg = ((((bezelRotationDeg + (delta * sensitivity)) % 360f) + 360f) % 360f)
+            compassView.setBezelRotation(bezelRotationDeg)
+            return true
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == locationPermissionRequestCode) {
+            if (grantResults.isNotEmpty() && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
                 startLocationUpdates()
             } else {
                 Toast.makeText(this, "Location permission denied. GPS features disabled.", Toast.LENGTH_LONG).show()
+                updateCompassViewGpsData()
             }
         }
     }
