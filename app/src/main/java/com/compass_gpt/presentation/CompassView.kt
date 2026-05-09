@@ -3,6 +3,7 @@ package com.compass_gpt.presentation
 import android.content.Context
 import android.graphics.*
 import android.hardware.SensorManager
+import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -10,17 +11,31 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.core.graphics.toColorInt
 import androidx.core.graphics.withRotation
+import com.compass_gpt.R
 import kotlin.math.*
 import android.view.HapticFeedbackConstants
+import android.os.SystemClock
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
+import android.view.animation.AccelerateInterpolator
+import kotlin.random.Random
 
 class CompassView @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyle: Int = 0,
+    context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
     // --- Constants ---
-    private val longPressDurationMs = 3000L
-    private val doubleTapTimeoutMs = 300L
-    private val singleTapConfirmDelayMs = doubleTapTimeoutMs + 50L
+    private val LONG_PRESS_DURATION_MS = 3000L
+    private val DOUBLE_TAP_TIMEOUT_MS = 300L
+    private val SINGLE_TAP_CONFIRM_DELAY_MS = DOUBLE_TAP_TIMEOUT_MS + 50L
+    private val SQUIRREL_CATCH_THRESHOLD_DP = 15f
+    private val SQUIRREL_SPEED_FACTOR = 0.02f
+    private val CAT_MOVE_TIMEOUT_MS = 400L
+    private val FIREWORKS_DURATION_MS = 3000L
+    private val FIREWORKS_PARTICLE_COUNT = 75
+    private val FIREWORKS_MIN_SPEED_FACTOR = 0.9f
+    private val FIREWORKS_MAX_SPEED_FACTOR = 1.5f
 
     // --- Paints ---
     private val bezelPaint = Paint().apply { color = Color.WHITE; strokeWidth = 2f; style = Paint.Style.STROKE; isAntiAlias = true }
@@ -33,7 +48,7 @@ class CompassView @JvmOverloads constructor(
     private val catSymbolMagneticPaint = Paint().apply { color = Color.RED; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
     private val catSymbolTrueNorthPaint = Paint().apply { color = Color.BLUE; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
     private val bubbleLevelOutlinePaint = Paint().apply { color = Color.DKGRAY; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
-    private val bubbleLevelBubblePaint = Paint().apply { color = "#88FFFFFF".toColorInt(); style = Paint.Style.FILL; isAntiAlias = true }
+    private val bubbleLevelBubblePaint = Paint().apply { color = Color.parseColor("#88FFFFFF"); style = Paint.Style.FILL; isAntiAlias = true }
     private val secretTextPaint = Paint().apply { color = Color.RED; textSize = 50f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
     private val goToNeedlePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 5f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
     private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
@@ -41,11 +56,17 @@ class CompassView @JvmOverloads constructor(
     private val accuracyPaintLow = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
     private val accuracyPaintUnreliable = Paint().apply { color = Color.GRAY; style = Paint.Style.FILL }
 
+    // Easter Egg Paints
+    private val squirrelPaint = Paint().apply { color = Color.parseColor("#FFA500"); textSize = 40f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
+    private val fireworksParticlePaint = Paint().apply { strokeWidth = 6f; style = Paint.Style.FILL; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
+    private val fireworkColors = listOf( Color.YELLOW, Color.RED, Color.WHITE, Color.CYAN, Color.MAGENTA, Color.GREEN, "#FF8C00".toColorInt(), "#FF1493".toColorInt() )
+
     // --- Path & Symbols ---
     private val bearingMarkerPath = Path()
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
+    private val squirrelSymbol = "🐿️"
 
     // --- Reusable Rects ---
     private val tempTextBounds = Rect()
@@ -63,35 +84,51 @@ class CompassView @JvmOverloads constructor(
     private var showTrueNorth = false
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
+    private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
+
+    // Interaction State
     private var isHoldingSymbol = false
     private var showSecretText = false
     private var lastTapTimeMs = 0L
-    private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
     private val interactionHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private var singleTapRunnable: Runnable? = null
 
+    // Easter Egg State
+    private var isEasterEggModeActive = false
+    private var mediaPlayer: MediaPlayer? = null
+    private var catPositionX: Float = 0f
+    private var catPositionY: Float = 0f
+    private var squirrelPositionX: Float = 0f
+    private var squirrelPositionY: Float = 0f
+    private var isCaught: Boolean = false
+    private var lastCatMoveTimeMs: Long = 0L
+    private var catchThresholdPx: Float = 0f
+    private var isFireworksActive: Boolean = false
+    private val fireworksParticles = mutableListOf<FireworkParticle>()
+    private var fireworksAnimator: ValueAnimator? = null
+    private var lastFireworksUpdate: Long = 0L
+
     init {
         isHapticFeedbackEnabled = true
+        // Keep initialization light to prevent ANR/Black Screen
     }
 
+    // --- Setters ---
     fun setSensorData(azimuth: Float, pitch: Float, roll: Float) {
-        magneticNeedleDeg = ((azimuth % 360f) + 360f) % 360f
+        magneticNeedleDeg = (azimuth % 360f + 360f) % 360f
         this.pitchDeg = pitch
         this.rollDeg = roll
         invalidate()
     }
-
     fun setBezelRotation(angle: Float) {
-        bezelRotationDeg = ((angle % 360f) + 360f) % 360f
+        bezelRotationDeg = (angle % 360f + 360f) % 360f
         invalidate()
     }
-
     fun setGpsData(speed: Float, altitude: Float, decl: Float, local: String, utc: String) {
         speedKmh = speed; altitudeM = altitude; declDeg = decl; localTime = local; utcTime = utc
         invalidate()
     }
-
     fun setSensorAccuracy(accuracy: Int) {
         if (accuracy != sensorAccuracyLevel) {
             sensorAccuracyLevel = accuracy
@@ -99,20 +136,13 @@ class CompassView @JvmOverloads constructor(
         }
     }
 
-    // --- FORCE DRAW ON SIZING ---
-    // If the OS auto-revokes permissions and pauses the app on startup,
-    // the sensors won't trigger a draw. This guarantees the compass renders.
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if ((w > 0) && (h > 0)) {
-            invalidate()
-        }
-    }
-
+    // --- Touch Event Handling ---
     override fun onTouchEvent(event: MotionEvent?): Boolean {
+        if (isEasterEggModeActive) return true // Block standard touches during easter egg
+
         if (event == null) return super.onTouchEvent(event)
-        val touchX = event.x - (width / 2f)
-        val touchY = event.y - (height / 2f)
+        val touchX = event.x - width / 2f
+        val touchY = event.y - height / 2f
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -129,7 +159,7 @@ class CompassView @JvmOverloads constructor(
                             invalidate()
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
+                    interactionHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION_MS)
                     return true
                 }
                 lastTapTimeMs = 0L
@@ -139,7 +169,6 @@ class CompassView @JvmOverloads constructor(
                 if (isHoldingSymbol && !symbolBounds.contains(touchX, touchY)) {
                     resetSymbolInteractionState()
                 }
-                return super.onTouchEvent(event)
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -149,11 +178,16 @@ class CompassView @JvmOverloads constructor(
                     val wasHolding = isHoldingSymbol
                     resetSymbolInteractionState()
 
-                    if ((event.action == MotionEvent.ACTION_UP) && symbolBounds.contains(touchX, touchY)) {
+                    if (event.action == MotionEvent.ACTION_UP && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
                             // Long press finished, do nothing
+                        } else if (currentTime - lastTapTimeMs <= DOUBLE_TAP_TIMEOUT_MS) {
+                            // --- DOUBLE TAP TRIGGER ---
+                            lastTapTimeMs = 0L
+                            activateEasterEggMode()
+                            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         } else {
-                            // Single tap
+                            // --- SINGLE TAP TRIGGER ---
                             lastTapTimeMs = currentTime
                             singleTapRunnable = Runnable {
                                 showTrueNorth = !showTrueNorth
@@ -161,26 +195,17 @@ class CompassView @JvmOverloads constructor(
                                 invalidate()
                                 singleTapRunnable = null
                             }
-                            interactionHandler.postDelayed(singleTapRunnable!!, singleTapConfirmDelayMs)
+                            interactionHandler.postDelayed(singleTapRunnable!!, SINGLE_TAP_CONFIRM_DELAY_MS)
                         }
                     } else {
                         lastTapTimeMs = 0L
                     }
-                    if (wasHolding) {
-                        performClick()
-                        return true
-                    }
+                    if (wasHolding) return true
                 }
                 lastTapTimeMs = 0L
-                return super.onTouchEvent(event)
             }
         }
         return super.onTouchEvent(event)
-    }
-
-    override fun performClick(): Boolean {
-        super.performClick()
-        return true
     }
 
     private fun resetSymbolInteractionState() {
@@ -192,17 +217,146 @@ class CompassView @JvmOverloads constructor(
         val needsRedraw = showSecretText || isHoldingSymbol
         isHoldingSymbol = false
         showSecretText = false
-        if (needsRedraw) {
-            invalidate()
+        if (needsRedraw) invalidate()
+    }
+
+    // --- Easter Egg Activation/Deactivation ---
+    private fun activateEasterEggMode() {
+        if (isEasterEggModeActive) return
+        if (width == 0 || height == 0) return
+
+        resetSymbolInteractionState()
+        isEasterEggModeActive = true
+        isCaught = false
+        isFireworksActive = false
+        fireworksAnimator?.cancel()
+        fireworksParticles.clear()
+
+        if (catchThresholdPx == 0f) {
+            catchThresholdPx = SQUIRREL_CATCH_THRESHOLD_DP * resources.displayMetrics.density
+        }
+
+        val chaseContainerRadius = (min(width / 2f, height / 2f) * 0.90f) * 0.90f
+        val maxAngleMap = 45f
+        val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
+        val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
+
+        catPositionX = -chaseContainerRadius * sin(rollRad) * (90f / maxAngleMap)
+        catPositionY = chaseContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
+
+        val catTotalOffset = sqrt(catPositionX.pow(2) + catPositionY.pow(2))
+        if (catTotalOffset > chaseContainerRadius) {
+            val scale = chaseContainerRadius / catTotalOffset
+            catPositionX *= scale; catPositionY *= scale
+        }
+
+        // Squirrel starts opposite to the cat
+        val catAngleRad = atan2(catPositionY, catPositionX)
+        val squirrelAngleRad = catAngleRad + PI.toFloat()
+        val squirrelDist = chaseContainerRadius * 0.8f
+        squirrelPositionX = squirrelDist * cos(squirrelAngleRad)
+        squirrelPositionY = squirrelDist * sin(squirrelAngleRad)
+
+        lastCatMoveTimeMs = SystemClock.elapsedRealtime()
+
+        if (mediaPlayer == null) {
+            try { mediaPlayer = MediaPlayer.create(context, R.raw.meow) } catch (e: Exception) { }
+        }
+        mediaPlayer?.let {
+            if (!it.isPlaying) {
+                try { it.seekTo(0); it.start() } catch (e: IllegalStateException) { }
+            }
+        }
+        invalidate()
+    }
+
+    private fun deactivateEasterEggMode() {
+        isEasterEggModeActive = false
+        fireworksAnimator?.cancel()
+        isFireworksActive = false
+        lastTapTimeMs = 0L
+        invalidate()
+    }
+
+    private fun startFireworksAnimation(x: Float, y: Float) {
+        if (isFireworksActive) return
+        if (width == 0 || height == 0) return
+
+        isFireworksActive = true
+        fireworksParticles.clear()
+
+        val screenRadius = min(width / 2f, height / 2f)
+
+        for (i in 0 until FIREWORKS_PARTICLE_COUNT) {
+            val angle = Random.nextFloat() * 2 * PI.toFloat()
+            val speed = Random.nextFloat() * (FIREWORKS_MAX_SPEED_FACTOR - FIREWORKS_MIN_SPEED_FACTOR) + FIREWORKS_MIN_SPEED_FACTOR
+            val timeFactor = if (FIREWORKS_DURATION_MS > 0) (FIREWORKS_DURATION_MS / 16f) else 1f
+            val velocityX = cos(angle) * speed * screenRadius / timeFactor
+            val velocityY = sin(angle) * speed * screenRadius / timeFactor
+            val color = fireworkColors.random()
+            fireworksParticles.add(FireworkParticle(x, y, velocityX, velocityY, color))
+        }
+        lastFireworksUpdate = SystemClock.elapsedRealtime()
+
+        fireworksAnimator?.cancel()
+        fireworksAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = FIREWORKS_DURATION_MS
+            interpolator = AccelerateInterpolator(1.5f)
+
+            addUpdateListener { animation ->
+                val currentTime = SystemClock.elapsedRealtime()
+                val deltaTime = (currentTime - lastFireworksUpdate) / 1000f
+                lastFireworksUpdate = currentTime
+                updateFireworks(deltaTime)
+                invalidate()
+            }
+            addListener(object: AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    isFireworksActive = false
+                    fireworksParticles.clear()
+                    fireworksAnimator = null
+                    deactivateEasterEggMode() // Finish easter egg after fireworks end
+                }
+                override fun onAnimationCancel(animation: Animator) {
+                    isFireworksActive = false
+                    fireworksParticles.clear()
+                    fireworksAnimator = null
+                    if (isEasterEggModeActive) deactivateEasterEggMode()
+                }
+            })
+        }
+        fireworksAnimator?.start()
+    }
+
+    private fun updateFireworks(deltaTime: Float) {
+        if (deltaTime <= 0) return
+        val iterator = fireworksParticles.iterator()
+        val gravity = 9.8f * 50f
+        val airResistanceFactor = 1.0f - (1.0f - 0.99f) * deltaTime * 60f
+
+        while(iterator.hasNext()){
+            val particle = iterator.next()
+            particle.velocityY += gravity * deltaTime
+            particle.velocityX *= airResistanceFactor
+            particle.velocityY *= airResistanceFactor
+            particle.x += particle.velocityX * deltaTime
+            particle.y += particle.velocityY * deltaTime
+            particle.life -= deltaTime * (1f / (FIREWORKS_DURATION_MS/1000f))
+            if (particle.life <= 0f) {
+                iterator.remove()
+            } else {
+                particle.alpha = (255 * (particle.life.coerceIn(0f, 0.5f) * 2f)).toInt().coerceIn(0,255)
+            }
         }
     }
 
+    // --- Main Drawing Loop ---
     override fun onDraw(canvas: Canvas) {
-        if ((width == 0) || (height == 0)) {
-            return
-        }
+        // SAFETY GUARD: Prevents the blank screen bug
+        if (width == 0 || height == 0) return
         super.onDraw(canvas)
 
+        // SAFETY GUARD: Explicitly clear the background
         canvas.drawColor(Color.BLACK)
 
         val cx = width / 2f
@@ -212,32 +366,44 @@ class CompassView @JvmOverloads constructor(
         val edgeRadius = min(cx, cy)
         val mainRadius = edgeRadius * 0.90f
 
+        // 1) Draw Bezel
         canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
+
+        // 2) Draw Bearing Marker
         drawBearingMarker(canvas, edgeRadius)
 
-        val headingToShow: Float
-        val currentNeedlePaint: Paint
-        if (showTrueNorth) {
-            headingToShow = ((magneticNeedleDeg - declDeg) + 360f) % 360f
-            currentNeedlePaint = trueNorthNeedlePaint
+        if (isEasterEggModeActive) {
+            drawChaseScene(canvas, mainRadius)
+            if (isFireworksActive) {
+                drawFireworks(canvas)
+            }
         } else {
-            headingToShow = magneticNeedleDeg
-            currentNeedlePaint = magneticNeedlePaint
+            // Draw Normal Compass Elements
+            val headingToShow: Float
+            val currentNeedlePaint: Paint
+            if (showTrueNorth) {
+                headingToShow = (magneticNeedleDeg - declDeg + 360f) % 360f
+                currentNeedlePaint = trueNorthNeedlePaint
+            } else {
+                headingToShow = magneticNeedleDeg
+                currentNeedlePaint = magneticNeedlePaint
+            }
+            canvas.withRotation(-headingToShow) {
+                drawNeedle(this, mainRadius, currentNeedlePaint)
+            }
+            drawGoToNeedle(canvas, mainRadius, goToNeedlePaint)
+            drawModeSymbol(canvas, mainRadius)
+            drawBubbleLevel(canvas, mainRadius)
+            drawAccuracyIndicator(canvas, mainRadius)
+            drawReadouts(canvas)
         }
-        canvas.withRotation(-headingToShow) {
-            drawNeedle(this, mainRadius, currentNeedlePaint)
-        }
-        drawGoToNeedle(canvas, mainRadius, goToNeedlePaint)
-        drawModeSymbol(canvas, mainRadius)
-        drawBubbleLevel(canvas, mainRadius)
-        drawAccuracyIndicator(canvas, mainRadius)
-        drawReadouts(canvas)
 
         if (showSecretText) {
             drawSecretTextOverlay(canvas)
         }
     }
 
+    // --- Private Drawing Helpers ---
     private fun drawBearingMarker(canvas: Canvas, radius: Float) {
         val markerOuterY = -radius * 1.0f
         val markerHeight = radius * 0.1f
@@ -253,20 +419,18 @@ class CompassView @JvmOverloads constructor(
 
     private fun drawBezel(canvas: Canvas, radius: Float) {
         for (angle in 0 until 360 step 15) {
-            val isMajor = ((angle % 90) == 0)
+            val isMajor = (angle % 90 == 0)
+            val tickOuter = radius
             val tickInner = if (isMajor) radius * 0.90f else radius * 0.95f
             val rad = Math.toRadians(angle.toDouble()).toFloat()
-            val sinA = sin(rad); val cosA = cos(rad)
-            canvas.drawLine(radius * sinA, -radius * cosA, tickInner * sinA, -tickInner * cosA, bezelPaint)
+            canvas.drawLine(tickOuter * sin(rad), -tickOuter * cos(rad), tickInner * sin(rad), -tickInner * cos(rad), bezelPaint)
         }
         val textRadius = radius * 0.80f
         for ((angle, label) in listOf(0 to "N", 90 to "E", 180 to "S", 270 to "W")) {
             val rad = Math.toRadians(angle.toDouble()).toFloat()
-            val sinA = sin(rad); val cosA = cos(rad)
-            val x = textRadius * sinA; val y = -textRadius * cosA
             readoutPaint.getTextBounds(label, 0, label.length, tempTextBounds)
             val textHeightOffset = tempTextBounds.height() / 2f
-            canvas.drawText(label, x, y + textHeightOffset, readoutPaint)
+            canvas.drawText(label, textRadius * sin(rad), -textRadius * cos(rad) + textHeightOffset, readoutPaint)
         }
     }
 
@@ -285,20 +449,18 @@ class CompassView @JvmOverloads constructor(
         currentPaint.getTextBounds(currentSymbol, 0, currentSymbol.length, tempTextBounds)
         val textHeight = tempTextBounds.height().toFloat()
         val textWidth = currentPaint.measureText(currentSymbol)
-        val yOffset = (textHeight / 2f) - tempTextBounds.bottom
+        val yOffset = textHeight / 2f - tempTextBounds.bottom
 
         val symbolX = -radius * 0.60f
         val symbolY = 0f
         canvas.drawText(currentSymbol, symbolX, symbolY + yOffset, currentPaint)
 
-        symbolBounds.apply {
-            set(
-                symbolX - (textWidth / 2f) - symbolClickPadding,
-                (symbolY + yOffset) - (textHeight / 2f) - symbolClickPadding,
-                symbolX + (textWidth / 2f) + symbolClickPadding,
-                (symbolY + yOffset) + (textHeight / 2f) + symbolClickPadding,
-            )
-        }
+        symbolBounds.set(
+            symbolX - textWidth / 2f - symbolClickPadding,
+            symbolY + yOffset - textHeight / 2f - symbolClickPadding,
+            symbolX + textWidth / 2f + symbolClickPadding,
+            symbolY + yOffset + textHeight / 2f + symbolClickPadding
+        )
     }
 
     private fun drawBubbleLevel(canvas: Canvas, radius: Float) {
@@ -306,14 +468,16 @@ class CompassView @JvmOverloads constructor(
         val levelCenterY = 0f
         val levelRadius = radius * 0.15f
         canvas.drawCircle(levelCenterX, levelCenterY, levelRadius, bubbleLevelOutlinePaint)
+
         val maxAngleMap = 45f
         val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
         val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
         var bubbleOffsetX = -levelRadius * sin(rollRad) * (90f / maxAngleMap)
         var bubbleOffsetY = levelRadius * sin(pitchRad) * (90f / maxAngleMap)
+
         val totalOffset = sqrt(bubbleOffsetX.pow(2) + bubbleOffsetY.pow(2))
         val bubbleRadius = levelRadius * 0.3f
-        if (totalOffset > (levelRadius - bubbleRadius)) {
+        if (totalOffset > levelRadius - bubbleRadius) {
             val scale = (levelRadius - bubbleRadius) / totalOffset
             bubbleOffsetX *= scale
             bubbleOffsetY *= scale
@@ -326,15 +490,15 @@ class CompassView @JvmOverloads constructor(
         val textHeightReadout = readoutPaint.descent() - readoutPaint.ascent()
         val lineSpacingReadout = textHeightReadout * 1.15f
         val totalHeightReadouts = (linesCountForReadouts - 1) * lineSpacingReadout
-        val firstLineYReadout = (-totalHeightReadouts / 2f) - readoutPaint.ascent()
+        val firstLineYReadout = -totalHeightReadouts / 2f - readoutPaint.ascent()
         secretTextPaint.getTextBounds(secretText, 0, secretText.length, tempTextBounds)
         val secretTextHeight = tempTextBounds.height()
-        val secretTextY = firstLineYReadout - (secretTextHeight * 0.5f)
+        val secretTextY = firstLineYReadout - secretTextHeight * 0.5f
         canvas.drawText(secretText, 0f, secretTextY, secretTextPaint)
     }
 
     private fun drawReadouts(canvas: Canvas) {
-        val bearing = ((360f - bezelRotationDeg) + 360f) % 360f
+        val bearing = (360f - bezelRotationDeg + 360f) % 360f
         val bearingSuffix = if (showTrueNorth) "°T" else "°M"
         val lineBRGUpdated = "BRG ${bearing.toInt()}$bearingSuffix"
         val lineSpd = "Spd: %.1f km/h".format(speedKmh)
@@ -343,10 +507,12 @@ class CompassView @JvmOverloads constructor(
         val lineLocal = "Loc: $localTime"
         val lineUTC = "UTC: $utcTime"
         val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineDecl, lineLocal, lineUTC)
+
         val textHeight = readoutPaint.descent() - readoutPaint.ascent()
         val lineSpacing = textHeight * 1.15f
         val totalHeight = (lines.size - 1) * lineSpacing
-        var currentY = (-totalHeight / 2f) - readoutPaint.ascent()
+        var currentY = -totalHeight / 2f - readoutPaint.ascent()
+
         val brgPaint = if (showTrueNorth) trueNorthReadoutPaint else magneticReadoutPaint
         for ((index, line) in lines.withIndex()) {
             val paintToUse = if (index == 0) brgPaint else readoutPaint
@@ -364,7 +530,7 @@ class CompassView @JvmOverloads constructor(
     private fun drawAccuracyIndicator(canvas: Canvas, radius: Float) {
         val indicatorRadius = radius * 0.05f
         val indicatorX = radius * 0.60f
-        val indicatorY = (radius * 0.15f) + (indicatorRadius * 2.5f)
+        val indicatorY = radius * 0.15f + indicatorRadius * 2.5f
         val paintToUse = when (sensorAccuracyLevel) {
             SensorManager.SENSOR_STATUS_ACCURACY_HIGH -> accuracyPaintHigh
             SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM -> accuracyPaintMedium
@@ -374,10 +540,93 @@ class CompassView @JvmOverloads constructor(
         canvas.drawCircle(indicatorX, indicatorY, indicatorRadius, paintToUse)
     }
 
+    private fun drawChaseScene(canvas: Canvas, radius: Float) {
+        val chaseContainerRadius = radius * 0.90f
+        val maxAngleMap = 45f
+
+        val rollRad = Math.toRadians(rollDeg.toDouble()).toFloat()
+        val pitchRad = Math.toRadians(pitchDeg.toDouble()).toFloat()
+        var targetCatX = -chaseContainerRadius * sin(rollRad) * (90f / maxAngleMap)
+        var targetCatY = chaseContainerRadius * sin(pitchRad) * (90f / maxAngleMap)
+
+        val catTotalOffset = sqrt(targetCatX.pow(2) + targetCatY.pow(2))
+        if (catTotalOffset > chaseContainerRadius) {
+            val scale = chaseContainerRadius / catTotalOffset
+            targetCatX *= scale; targetCatY *= scale
+        }
+
+        val dxCat = targetCatX - catPositionX
+        val dyCat = targetCatY - catPositionY
+        val distMovedCat = sqrt(dxCat*dxCat + dyCat*dyCat)
+        val currentTime = SystemClock.elapsedRealtime()
+
+        if (distMovedCat > 2.0f) { lastCatMoveTimeMs = currentTime }
+        catPositionX = targetCatX; catPositionY = targetCatY
+
+        if (!isCaught) {
+            val deltaX = catPositionX - squirrelPositionX
+            val deltaY = catPositionY - squirrelPositionY
+            val distance = sqrt(deltaX.pow(2) + deltaY.pow(2))
+
+            if (distance < catchThresholdPx) {
+                isCaught = true
+                squirrelPositionX = catPositionX; squirrelPositionY = catPositionY
+                performHapticFeedback(HapticFeedbackConstants.REJECT)
+                startFireworksAnimation(0f, 0f)
+            } else {
+                if (currentTime - lastCatMoveTimeMs > CAT_MOVE_TIMEOUT_MS) {
+                    if (distance > 0) {
+                        val moveX = deltaX / distance * (distance * SQUIRREL_SPEED_FACTOR)
+                        val moveY = deltaY / distance * (distance * SQUIRREL_SPEED_FACTOR)
+                        squirrelPositionX += moveX; squirrelPositionY += moveY
+                    }
+                }
+            }
+        } else {
+            squirrelPositionX = catPositionX; squirrelPositionY = catPositionY
+        }
+
+        val fireworksMidPoint = FIREWORKS_DURATION_MS / 3f
+        val drawSymbolsDuringFireworks = !isFireworksActive || (fireworksAnimator?.currentPlayTime ?: 0 < fireworksMidPoint ||
+                fireworksAnimator?.currentPlayTime ?: 0 > FIREWORKS_DURATION_MS - fireworksMidPoint)
+
+        if (drawSymbolsDuringFireworks) {
+            val currentCatSymbol: String; val currentCatPaint: Paint
+            if (showTrueNorth) { currentCatSymbol = trueNorthSymbol; currentCatPaint = catSymbolTrueNorthPaint }
+            else { currentCatSymbol = magneticNorthSymbol; currentCatPaint = catSymbolMagneticPaint }
+
+            currentCatPaint.getTextBounds(currentCatSymbol, 0, currentCatSymbol.length, tempTextBounds)
+            val catYOffset = tempTextBounds.height() / 2f - tempTextBounds.bottom
+
+            squirrelPaint.getTextBounds(squirrelSymbol, 0, squirrelSymbol.length, tempTextBounds)
+            val squirrelYOffset = tempTextBounds.height() / 2f - tempTextBounds.bottom
+
+            canvas.drawText(currentCatSymbol, catPositionX, catPositionY + catYOffset, currentCatPaint)
+            canvas.drawText(squirrelSymbol, squirrelPositionX, squirrelPositionY + squirrelYOffset, squirrelPaint)
+        }
+    }
+
+    private fun drawFireworks(canvas: Canvas) {
+        if (!isFireworksActive || fireworksParticles.isEmpty()) return
+        for (particle in fireworksParticles) {
+            fireworksParticlePaint.color = particle.color
+            fireworksParticlePaint.alpha = particle.alpha
+            canvas.drawCircle(particle.x, particle.y, fireworksParticlePaint.strokeWidth / 2f, fireworksParticlePaint)
+        }
+    }
+
+    data class FireworkParticle(
+        var x: Float, var y: Float,
+        var velocityX: Float, var velocityY: Float,
+        val color: Int, var alpha: Int = 255,
+        var life: Float = 1.0f
+    )
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        mediaPlayer?.release(); mediaPlayer = null
         interactionHandler.removeCallbacksAndMessages(null)
-        longPressRunnable = null
-        singleTapRunnable = null
+        longPressRunnable = null; singleTapRunnable = null
+        fireworksAnimator?.cancel(); fireworksAnimator = null
     }
 }
