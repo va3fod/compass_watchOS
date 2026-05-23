@@ -48,7 +48,7 @@ class CompassView @JvmOverloads constructor(
     private val catSymbolTrueNorthPaint = Paint().apply { color = Color.BLUE; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
     private val bubbleLevelOutlinePaint = Paint().apply { color = Color.DKGRAY; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
     private val bubbleLevelBubblePaint = Paint().apply { color = "#88FFFFFF".toColorInt(); style = Paint.Style.FILL; isAntiAlias = true }
-    private val secretTextPaint = Paint().apply { color = Color.RED; textSize = 50f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
+    private val secretTextPaint = Paint().apply { color = Color.RED; textSize = 100f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
     private val goToNeedlePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 5f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
     private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
     private val accuracyPaintMedium = Paint().apply { color = Color.YELLOW; style = Paint.Style.FILL }
@@ -233,16 +233,15 @@ class CompassView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isHoldingSymbol || isHoldingCenter || isHoldingEdge) {
                     val currentTime = System.currentTimeMillis()
-                    val wasLongPress = showSecretText || ((event.action == MotionEvent.ACTION_UP) && (isHoldingCenter || isHoldingEdge) && (longPressRunnable == null))
-                    val wasHolding = (isHoldingSymbol || isHoldingCenter || isHoldingEdge)
-                    
-                    // Note: longPressRunnable being null means it already fired for Center/Edge
-                    
+                    val wasLongPress = (longPressRunnable == null)
+                    val wasHoldingSymbol = isHoldingSymbol
+                    val wasHoldingAny = (isHoldingSymbol || isHoldingCenter || isHoldingEdge)
+
                     resetSymbolInteractionState()
 
-                    if ((event.action == MotionEvent.ACTION_UP) && isHoldingSymbol && symbolBounds.contains(touchX, touchY)) {
+                    if ((event.action == MotionEvent.ACTION_UP) && wasHoldingSymbol && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
-                            // Long press finished
+                            // Already handled in runnable
                         } else if ((currentTime - lastTapTimeMs) <= doubleTapTimeoutMs) {
                             // --- DOUBLE TAP TRIGGER ---
                             lastTapTimeMs = 0L
@@ -262,10 +261,10 @@ class CompassView @JvmOverloads constructor(
                     } else {
                         lastTapTimeMs = 0L
                     }
-                    if (wasHolding) {
+                    if (wasHoldingAny) {
                         performClick()
-                        return true
                     }
+                    return true
                 }
                 lastTapTimeMs = 0L
             }
@@ -623,15 +622,11 @@ class CompassView @JvmOverloads constructor(
     }
 
     private fun drawSecretTextOverlay(canvas: Canvas) {
-        val linesCountForReadouts = 6
-        val textHeightReadout = (readoutPaint.descent() - readoutPaint.ascent())
-        val lineSpacingReadout = (textHeightReadout * 1.15f)
-        val totalHeightReadouts = ((linesCountForReadouts - 1) * lineSpacingReadout)
-        val firstLineYReadout = ((-totalHeightReadouts / 2f) - readoutPaint.ascent())
+        // Center the callsign and clear the area behind it for maximum visibility
+        canvas.drawColor(Color.BLACK)
         secretTextPaint.getTextBounds(secretText, 0, secretText.length, tempTextBounds)
-        val secretTextHeight = tempTextBounds.height()
-        val secretTextY = (firstLineYReadout - (secretTextHeight * 0.5f))
-        canvas.drawText(secretText, 0f, secretTextY, secretTextPaint)
+        val yOffset = (tempTextBounds.height() / 2f) - tempTextBounds.bottom
+        canvas.drawText(secretText, 0f, yOffset, secretTextPaint)
     }
 
     private fun drawReadouts(canvas: Canvas) {
