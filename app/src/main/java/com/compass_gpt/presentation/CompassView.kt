@@ -26,7 +26,6 @@ class CompassView @JvmOverloads constructor(
 ) : View(context, attrs, defStyle) {
 
     // --- Constants ---
-    private val longPressDurationMs = 2000L
     private val doubleTapTimeoutMs = 300L
     private val singleTapConfirmDelayMs = (doubleTapTimeoutMs + 50L)
     private val squirrelCatchThresholdDp = 15f
@@ -187,7 +186,7 @@ class CompassView @JvmOverloads constructor(
                             longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
+                    interactionHandler.postDelayed(longPressRunnable!!, 2000L) // Exactly 2s for callsign
                     return true
                 } else if (distFromCenter < (edgeThreshold / 2f)) {
                     // Holding center (Night Mode toggle)
@@ -200,7 +199,7 @@ class CompassView @JvmOverloads constructor(
                             longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
+                    interactionHandler.postDelayed(longPressRunnable!!, 1000L) // Center long press 1s
                     return true
                 } else if (distFromCenter > edgeThreshold) {
                     // Holding edge (Waypoint set)
@@ -213,7 +212,7 @@ class CompassView @JvmOverloads constructor(
                             longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
+                    interactionHandler.postDelayed(longPressRunnable!!, 1500L) // Edge long press 1.5s
                     return true
                 }
                 lastTapTimeMs = 0L
