@@ -199,7 +199,7 @@ class CompassView @JvmOverloads constructor(
                             longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, 1000L) // Center long press 1s
+                    interactionHandler.postDelayed(longPressRunnable!!, 2000L) // Center long press 2s
                     return true
                 } else if (distFromCenter > edgeThreshold) {
                     // Holding edge (Waypoint set)
@@ -212,7 +212,7 @@ class CompassView @JvmOverloads constructor(
                             longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, 1500L) // Edge long press 1.5s
+                    interactionHandler.postDelayed(longPressRunnable!!, 2000L) // Edge long press 2s
                     return true
                 }
                 lastTapTimeMs = 0L
@@ -371,7 +371,7 @@ class CompassView @JvmOverloads constructor(
         repeat(fireworksParticleCount) {
             val angle = (Random.nextFloat() * 2 * PI.toFloat())
             val speed = ((Random.nextFloat() * (fireworksMaxSpeedFactor - fireworksMinSpeedFactor)) + fireworksMinSpeedFactor)
-            val timeFactor = if (fireworksDurationMs > 0) (fireworksDurationMs / 16f) else 1f
+            val timeFactor = if (fireworksDurationMs > 0) (fireworksDurationMs / 1000f) else 1f
             val velocityX = ((cos(angle) * speed * screenRadius) / timeFactor)
             val velocityY = ((sin(angle) * speed * screenRadius) / timeFactor)
             val color = fireworkColors.random()
@@ -636,9 +636,10 @@ class CompassView @JvmOverloads constructor(
         val lineSpd = "Spd: %.1f km/h".format(speedKmh)
         val lineAlt = "Alt: %.0f m".format(altitudeM)
         val lineLocal = "Loc: $localTime"
+        val lineDecl = "Decl: %+.1f°".format(declDeg)
         val lineLat = "Lat: $latStr"
         val lineLon = "Lon: $lonStr"
-        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineLocal, lineLat, lineLon)
+        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineLocal, lineDecl, lineLat, lineLon)
 
         val textHeight = (readoutPaint.descent() - readoutPaint.ascent())
         val lineSpacing = (textHeight * 1.15f)
