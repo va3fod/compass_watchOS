@@ -26,7 +26,7 @@ class CompassView @JvmOverloads constructor(
 ) : View(context, attrs, defStyle) {
 
     // --- Constants ---
-    private val longPressDurationMs = 3000L
+    private val longPressDurationMs = 2000L
     private val doubleTapTimeoutMs = 300L
     private val singleTapConfirmDelayMs = (doubleTapTimeoutMs + 50L)
     private val squirrelCatchThresholdDp = 15f
@@ -184,6 +184,7 @@ class CompassView @JvmOverloads constructor(
                             showSecretText = true
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             invalidate()
+                            longPressRunnable = null // Mark as fired
                         }
                     }
                     interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
@@ -196,9 +197,10 @@ class CompassView @JvmOverloads constructor(
                             isNightMode = !isNightMode
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             invalidate()
+                            longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, 1000L) // 1s for night mode
+                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
                     return true
                 } else if (distFromCenter > edgeThreshold) {
                     // Holding edge (Waypoint set)
@@ -208,9 +210,10 @@ class CompassView @JvmOverloads constructor(
                             onWaypointSetListener?.invoke()
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             invalidate()
+                            longPressRunnable = null // Mark as fired
                         }
                     }
-                    interactionHandler.postDelayed(longPressRunnable!!, 1500L) // 1.5s for waypoint
+                    interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
                     return true
                 }
                 lastTapTimeMs = 0L
