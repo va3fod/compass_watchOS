@@ -53,6 +53,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var currentSpeedKmh = 0f
     private var currentAltitudeM = 0f
     private var lastKnownLocation: Location? = null
+    private var waypointLocation: Location? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +82,20 @@ class MainActivity : Activity(), SensorEventListener {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         createLocationCallback()
         startLocationUpdates()
+
+        compassView.setOnWaypointSetListener {
+            lastKnownLocation?.let { loc ->
+                waypointLocation = Location("waypoint").apply {
+                    latitude = loc.latitude
+                    longitude = loc.longitude
+                }
+                Toast.makeText(this, "Waypoint set!", Toast.LENGTH_SHORT).show()
+                updateCompassViewGpsData()
+            } ?: run {
+                Toast.makeText(this, "No GPS fix yet!", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         updateCompassViewGpsData()
     }
 
@@ -153,14 +168,20 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     private fun updateCompassViewGpsData() {
+        var latStr = "---"
+        var lonStr = "---"
+
         lastKnownLocation?.let { location ->
-            currentSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
+            currentSpeedKmh = if (location.hasSpeed()) (location.speed * 3.6f) else 0f
             currentAltitudeM = if (location.hasAltitude()) location.altitude.toFloat() else 0f
             val geoField = GeomagneticField(
                 location.latitude.toFloat(), location.longitude.toFloat(),
                 location.altitude.toFloat(), System.currentTimeMillis(),
             )
             declinationDeg = geoField.declination
+
+            latStr = "%.4f".format(location.latitude)
+            lonStr = "%.4f".format(location.longitude)
         }
 
         val now = Calendar.getInstance()
@@ -172,7 +193,15 @@ class MainActivity : Activity(), SensorEventListener {
         utcFmt.timeZone = TimeZone.getTimeZone("UTC")
         val utcStr = utcFmt.format(now.time)
 
-        compassView.setGpsData(currentSpeedKmh, currentAltitudeM, declinationDeg, localStr, utcStr)
+        compassView.setGpsData(currentSpeedKmh, currentAltitudeM, declinationDeg, localStr, utcStr, latStr, lonStr)
+
+        // Update Waypoint Bearing
+        if ((lastKnownLocation != null) && (waypointLocation != null)) {
+            val bearing = lastKnownLocation!!.bearingTo(waypointLocation!!)
+            compassView.setWaypointBearing((bearing + 360f) % 360f)
+        } else {
+            compassView.setWaypointBearing(null)
+        }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {

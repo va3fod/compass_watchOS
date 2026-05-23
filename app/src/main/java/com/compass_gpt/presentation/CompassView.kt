@@ -81,13 +81,19 @@ class CompassView @JvmOverloads constructor(
     private var declDeg = 0f
     private var localTime = ""
     private var utcTime = ""
+    private var latStr = "---"
+    private var lonStr = "---"
     private var showTrueNorth = false
+    private var isNightMode = false
+    private var waypointBearing: Float? = null
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
     private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
 
     // Interaction State
     private var isHoldingSymbol = false
+    private var isHoldingCenter = false
+    private var isHoldingEdge = false
     private var showSecretText = false
     private var lastTapTimeMs = 0L
     private val interactionHandler = Handler(Looper.getMainLooper())
@@ -127,13 +133,25 @@ class CompassView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setGpsData(speed: Float, altitude: Float, decl: Float, local: String, utc: String) {
+    fun setGpsData(speed: Float, altitude: Float, decl: Float, local: String, utc: String, lat: String = "---", lon: String = "---") {
         speedKmh = speed
         altitudeM = altitude
         declDeg = decl
         localTime = local
         utcTime = utc
+        latStr = lat
+        lonStr = lon
         invalidate()
+    }
+
+    fun setWaypointBearing(bearing: Float?) {
+        waypointBearing = bearing
+        invalidate()
+    }
+
+    private var onWaypointSetListener: (() -> Unit)? = null
+    fun setOnWaypointSetListener(listener: () -> Unit) {
+        onWaypointSetListener = listener
     }
 
     fun setSensorAccuracy(accuracy: Int) {
@@ -150,6 +168,8 @@ class CompassView @JvmOverloads constructor(
         if (event == null) return super.onTouchEvent(event)
         val touchX = (event.x - (width / 2f))
         val touchY = (event.y - (height / 2f))
+        val distFromCenter = sqrt((touchX * touchX) + (touchY * touchY))
+        val edgeThreshold = (min(width, height) / 2f) * 0.7f
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
@@ -168,6 +188,30 @@ class CompassView @JvmOverloads constructor(
                     }
                     interactionHandler.postDelayed(longPressRunnable!!, longPressDurationMs)
                     return true
+                } else if (distFromCenter < (edgeThreshold / 2f)) {
+                    // Holding center (Night Mode toggle)
+                    isHoldingCenter = true
+                    longPressRunnable = Runnable {
+                        if (isHoldingCenter) {
+                            isNightMode = !isNightMode
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            invalidate()
+                        }
+                    }
+                    interactionHandler.postDelayed(longPressRunnable!!, 1000L) // 1s for night mode
+                    return true
+                } else if (distFromCenter > edgeThreshold) {
+                    // Holding edge (Waypoint set)
+                    isHoldingEdge = true
+                    longPressRunnable = Runnable {
+                        if (isHoldingEdge) {
+                            onWaypointSetListener?.invoke()
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            invalidate()
+                        }
+                    }
+                    interactionHandler.postDelayed(longPressRunnable!!, 1500L) // 1.5s for waypoint
+                    return true
                 }
                 lastTapTimeMs = 0L
             }
@@ -176,18 +220,27 @@ class CompassView @JvmOverloads constructor(
                 if (isHoldingSymbol && (!symbolBounds.contains(touchX, touchY))) {
                     resetSymbolInteractionState()
                 }
+                if (isHoldingCenter && (distFromCenter >= (edgeThreshold / 2f))) {
+                    resetSymbolInteractionState()
+                }
+                if (isHoldingEdge && (distFromCenter <= edgeThreshold)) {
+                    resetSymbolInteractionState()
+                }
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (isHoldingSymbol) {
+                if (isHoldingSymbol || isHoldingCenter || isHoldingEdge) {
                     val currentTime = System.currentTimeMillis()
-                    val wasLongPress = showSecretText
-                    val wasHolding = isHoldingSymbol
+                    val wasLongPress = showSecretText || ((event.action == MotionEvent.ACTION_UP) && (isHoldingCenter || isHoldingEdge) && (longPressRunnable == null))
+                    val wasHolding = (isHoldingSymbol || isHoldingCenter || isHoldingEdge)
+                    
+                    // Note: longPressRunnable being null means it already fired for Center/Edge
+                    
                     resetSymbolInteractionState()
 
-                    if ((event.action == MotionEvent.ACTION_UP) && symbolBounds.contains(touchX, touchY)) {
+                    if ((event.action == MotionEvent.ACTION_UP) && isHoldingSymbol && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
-                            // Long press finished, do nothing
+                            // Long press finished
                         } else if ((currentTime - lastTapTimeMs) <= doubleTapTimeoutMs) {
                             // --- DOUBLE TAP TRIGGER ---
                             lastTapTimeMs = 0L
@@ -229,8 +282,10 @@ class CompassView @JvmOverloads constructor(
         singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
         singleTapRunnable = null
 
-        val needsRedraw = (showSecretText || isHoldingSymbol)
+        val needsRedraw = (showSecretText || isHoldingSymbol || isHoldingCenter || isHoldingEdge)
         isHoldingSymbol = false
+        isHoldingCenter = false
+        isHoldingEdge = false
         showSecretText = false
         if (needsRedraw) invalidate()
     }
@@ -335,21 +390,23 @@ class CompassView @JvmOverloads constructor(
                 updateFireworks(deltaTime)
                 invalidate()
             }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    isFireworksActive = false
-                    fireworksParticles.clear()
-                    fireworksAnimator = null
-                    deactivateEasterEggMode() // Finish easter egg after fireworks end
-                }
+            addListener(
+                object : AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: Animator) {
+                        isFireworksActive = false
+                        fireworksParticles.clear()
+                        fireworksAnimator = null
+                        deactivateEasterEggMode() // Finish easter egg after fireworks end
+                    }
 
-                override fun onAnimationCancel(animation: Animator) {
-                    isFireworksActive = false
-                    fireworksParticles.clear()
-                    fireworksAnimator = null
-                    if (isEasterEggModeActive) deactivateEasterEggMode()
-                }
-            })
+                    override fun onAnimationCancel(animation: Animator) {
+                        isFireworksActive = false
+                        fireworksParticles.clear()
+                        fireworksAnimator = null
+                        if (isEasterEggModeActive) deactivateEasterEggMode()
+                    }
+                },
+            )
         }
         fireworksAnimator?.start()
     }
@@ -371,7 +428,10 @@ class CompassView @JvmOverloads constructor(
             if (particle.life <= 0f) {
                 iterator.remove()
             } else {
-                particle.alpha = (255 * (particle.life.coerceIn(0f, 0.5f) * 2f)).toInt().coerceIn(0, 255)
+                // Keep particles bright for first 80% of life, then fade
+                val fadeStart = 0.2f
+                val alphaFactor = if (particle.life < fadeStart) (particle.life / fadeStart) else 1.0f
+                particle.alpha = (255 * alphaFactor).toInt().coerceIn(0, 255)
             }
         }
     }
@@ -383,7 +443,7 @@ class CompassView @JvmOverloads constructor(
         super.onDraw(canvas)
 
         // SAFETY GUARD: Explicitly clear the background
-        canvas.drawColor(Color.BLACK)
+        canvas.drawColor(if (isNightMode) Color.BLACK else Color.BLACK) // Both black for now, but paints will change
 
         val cx = (width / 2f)
         val cy = (height / 2f)
@@ -391,6 +451,9 @@ class CompassView @JvmOverloads constructor(
 
         val edgeRadius = min(cx, cy)
         val mainRadius = (edgeRadius * 0.90f)
+
+        // Update paint colors for Night Mode
+        updatePaintsForTheme()
 
         // 1) Draw Bezel
         canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
@@ -417,16 +480,56 @@ class CompassView @JvmOverloads constructor(
             canvas.withRotation(-headingToShow) {
                 drawNeedle(this, mainRadius, currentNeedlePaint)
             }
-            drawGoToNeedle(canvas, mainRadius, goToNeedlePaint)
+
+            // Waypoint Needle
+            waypointBearing?.let { wpBearing ->
+                canvas.withRotation(-(headingToShow - wpBearing)) {
+                    drawGoToNeedle(this, mainRadius, goToNeedlePaint)
+                }
+            }
+
             drawModeSymbol(canvas, mainRadius)
             drawBubbleLevel(canvas, mainRadius)
             drawAccuracyIndicator(canvas, mainRadius)
             drawReadouts(canvas)
+            
+            if (sensorAccuracyLevel == SensorManager.SENSOR_STATUS_UNRELIABLE) {
+                drawCalibrationWarning(canvas, mainRadius)
+            }
         }
 
         if (showSecretText) {
             drawSecretTextOverlay(canvas)
         }
+    }
+
+    private fun updatePaintsForTheme() {
+        val primary = if (isNightMode) Color.RED else Color.WHITE
+        val accent = if (isNightMode) Color.RED else "#ADD8E6".toColorInt()
+        
+        bezelPaint.color = primary
+        readoutPaint.color = primary
+        magneticReadoutPaint.color = Color.RED
+        trueNorthReadoutPaint.color = if (isNightMode) Color.RED else Color.BLUE
+        magneticNeedlePaint.color = Color.RED
+        trueNorthNeedlePaint.color = if (isNightMode) Color.RED else Color.BLUE
+        bearingMarkerPaint.color = accent
+        catSymbolMagneticPaint.color = Color.RED
+        catSymbolTrueNorthPaint.color = if (isNightMode) Color.RED else Color.BLUE
+        bubbleLevelOutlinePaint.color = if (isNightMode) Color.RED else Color.DKGRAY
+        bubbleLevelBubblePaint.color = if (isNightMode) "#44FF0000".toColorInt() else "#88FFFFFF".toColorInt()
+        goToNeedlePaint.color = if (isNightMode) Color.RED else Color.YELLOW
+    }
+
+    private fun drawCalibrationWarning(canvas: Canvas, radius: Float) {
+        val warningPaint = Paint().apply {
+            color = Color.RED
+            textSize = 24f
+            textAlign = Paint.Align.CENTER
+            isAntiAlias = true
+            alpha = (127 + 128 * sin(SystemClock.elapsedRealtime() * 0.005f)).toInt().coerceIn(0, 255)
+        }
+        canvas.drawText("CALIBRATE (8)", 0f, -radius * 0.4f, warningPaint)
     }
 
     // --- Private Drawing Helpers ---
@@ -535,10 +638,10 @@ class CompassView @JvmOverloads constructor(
         val lineBRGUpdated = "BRG ${bearing.toInt()}$bearingSuffix"
         val lineSpd = "Spd: %.1f km/h".format(speedKmh)
         val lineAlt = "Alt: %.0f m".format(altitudeM)
-        val lineDecl = "Decl: %+.1f°".format(declDeg)
         val lineLocal = "Loc: $localTime"
-        val lineUTC = "UTC: $utcTime"
-        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineDecl, lineLocal, lineUTC)
+        val lineLat = "Lat: $latStr"
+        val lineLon = "Lon: $lonStr"
+        val lines = listOf(lineBRGUpdated, lineSpd, lineAlt, lineLocal, lineLat, lineLon)
 
         val textHeight = (readoutPaint.descent() - readoutPaint.ascent())
         val lineSpacing = (textHeight * 1.15f)
@@ -609,7 +712,8 @@ class CompassView @JvmOverloads constructor(
                 squirrelPositionX = catPositionX
                 squirrelPositionY = catPositionY
                 performHapticFeedback(HapticFeedbackConstants.REJECT)
-                startFireworksAnimation(0f, 0f)
+                // Start fireworks at the point of capture
+                startFireworksAnimation(catPositionX, catPositionY)
             } else {
                 if ((currentTime - lastCatMoveTimeMs) > catMoveTimeoutMs) {
                     if (distance > 0) {
@@ -657,7 +761,10 @@ class CompassView @JvmOverloads constructor(
         for (particle in fireworksParticles) {
             fireworksParticlePaint.color = particle.color
             fireworksParticlePaint.alpha = particle.alpha
-            canvas.drawCircle(particle.x, particle.y, (fireworksParticlePaint.strokeWidth / 2f), fireworksParticlePaint)
+            // Sparkle effect: vary radius slightly based on current time
+            val sparkle = (1.0f + 0.3f * sin(SystemClock.elapsedRealtime() * 0.02f))
+            val radius = (fireworksParticlePaint.strokeWidth / 2f) * sparkle
+            canvas.drawCircle(particle.x, particle.y, radius, fireworksParticlePaint)
         }
     }
 
