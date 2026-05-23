@@ -28,6 +28,7 @@ class CompassView @JvmOverloads constructor(
     // --- Constants ---
     private val doubleTapTimeoutMs = 300L
     private val singleTapConfirmDelayMs = (doubleTapTimeoutMs + 50L)
+    private val hideSecretTextDelayMs = 2000L
     private val squirrelCatchThresholdDp = 15f
     private val squirrelSpeedFactor = 0.02f
     private val catMoveTimeoutMs = 400L
@@ -83,7 +84,7 @@ class CompassView @JvmOverloads constructor(
     private var latStr = "---"
     private var lonStr = "---"
     private var showTrueNorth = false
-    private var isNightMode = false
+    private var currentThemeIndex = 0 // 0: NORMAL, 1: TACTICAL_RED, 2: NVG_GREEN
     private var waypointBearing: Float? = null
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
@@ -98,6 +99,10 @@ class CompassView @JvmOverloads constructor(
     private val interactionHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private var singleTapRunnable: Runnable? = null
+    private val hideSecretTextRunnable = Runnable {
+        showSecretText = false
+        invalidate()
+    }
 
     // Easter Egg State
     private var isEasterEggModeActive = false
@@ -174,10 +179,11 @@ class CompassView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
                 singleTapRunnable = null
+                interactionHandler.removeCallbacks(hideSecretTextRunnable)
 
                 if (symbolBounds.contains(touchX, touchY)) {
                     isHoldingSymbol = true
-                    showSecretText = false
+                    // Note: Don't set showSecretText = false immediately to allow persistence
                     longPressRunnable = Runnable {
                         if (isHoldingSymbol) {
                             showSecretText = true
@@ -189,11 +195,11 @@ class CompassView @JvmOverloads constructor(
                     interactionHandler.postDelayed(longPressRunnable!!, 2000L) // Exactly 2s for callsign
                     return true
                 } else if (distFromCenter < (edgeThreshold / 2f)) {
-                    // Holding center (Night Mode toggle)
+                    // Holding center (Cycle Themes)
                     isHoldingCenter = true
                     longPressRunnable = Runnable {
                         if (isHoldingCenter) {
-                            isNightMode = !isNightMode
+                            currentThemeIndex = (currentThemeIndex + 1) % 3
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             invalidate()
                             longPressRunnable = null // Mark as fired
@@ -237,11 +243,16 @@ class CompassView @JvmOverloads constructor(
                     val wasHoldingSymbol = isHoldingSymbol
                     val wasHoldingAny = (isHoldingSymbol || isHoldingCenter || isHoldingEdge)
 
-                    resetSymbolInteractionState()
+                    if (wasHoldingSymbol && wasLongPress) {
+                        // Trigger persistence when callsign is released
+                        interactionHandler.postDelayed(hideSecretTextRunnable, hideSecretTextDelayMs)
+                    }
+
+                    resetSymbolInteractionState(keepSecretIfHolding = true)
 
                     if ((event.action == MotionEvent.ACTION_UP) && wasHoldingSymbol && symbolBounds.contains(touchX, touchY)) {
                         if (wasLongPress) {
-                            // Already handled in runnable
+                            // Already handled above
                         } else if ((currentTime - lastTapTimeMs) <= doubleTapTimeoutMs) {
                             // --- DOUBLE TAP TRIGGER ---
                             lastTapTimeMs = 0L
@@ -277,17 +288,17 @@ class CompassView @JvmOverloads constructor(
         return true
     }
 
-    private fun resetSymbolInteractionState() {
+    private fun resetSymbolInteractionState(keepSecretIfHolding: Boolean = false) {
         longPressRunnable?.let { interactionHandler.removeCallbacks(it) }
         longPressRunnable = null
         singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
         singleTapRunnable = null
 
-        val needsRedraw = (showSecretText || isHoldingSymbol || isHoldingCenter || isHoldingEdge)
+        val needsRedraw = (!keepSecretIfHolding && showSecretText) || isHoldingSymbol || isHoldingCenter || isHoldingEdge
         isHoldingSymbol = false
         isHoldingCenter = false
         isHoldingEdge = false
-        showSecretText = false
+        if (!keepSecretIfHolding) showSecretText = false
         if (needsRedraw) invalidate()
     }
 
@@ -444,7 +455,7 @@ class CompassView @JvmOverloads constructor(
         super.onDraw(canvas)
 
         // SAFETY GUARD: Explicitly clear the background
-        canvas.drawColor(if (isNightMode) Color.BLACK else Color.BLACK) // Both black for now, but paints will change
+        canvas.drawColor(Color.BLACK)
 
         val cx = (width / 2f)
         val cy = (height / 2f)
@@ -453,7 +464,7 @@ class CompassView @JvmOverloads constructor(
         val edgeRadius = min(cx, cy)
         val mainRadius = (edgeRadius * 0.90f)
 
-        // Update paint colors for Night Mode
+        // Update paint colors for Theme
         updatePaintsForTheme()
 
         // 1) Draw Bezel
@@ -505,31 +516,52 @@ class CompassView @JvmOverloads constructor(
     }
 
     private fun updatePaintsForTheme() {
-        val primary = if (isNightMode) Color.RED else Color.WHITE
-        val accent = if (isNightMode) Color.RED else "#ADD8E6".toColorInt()
+        val primary = when (currentThemeIndex) {
+            1 -> Color.RED
+            2 -> Color.GREEN
+            else -> Color.WHITE
+        }
+        val accent = when (currentThemeIndex) {
+            1 -> Color.RED
+            2 -> Color.GREEN
+            else -> "#ADD8E6".toColorInt()
+        }
         
         bezelPaint.color = primary
         readoutPaint.color = primary
         magneticReadoutPaint.color = Color.RED
-        trueNorthReadoutPaint.color = if (isNightMode) Color.RED else Color.BLUE
+        trueNorthReadoutPaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
         magneticNeedlePaint.color = Color.RED
-        trueNorthNeedlePaint.color = if (isNightMode) Color.RED else Color.BLUE
+        trueNorthNeedlePaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
         bearingMarkerPaint.color = accent
         catSymbolMagneticPaint.color = Color.RED
-        catSymbolTrueNorthPaint.color = if (isNightMode) Color.RED else Color.BLUE
-        bubbleLevelOutlinePaint.color = if (isNightMode) Color.RED else Color.DKGRAY
-        bubbleLevelBubblePaint.color = if (isNightMode) "#44FF0000".toColorInt() else "#88FFFFFF".toColorInt()
-        goToNeedlePaint.color = if (isNightMode) Color.RED else Color.YELLOW
+        catSymbolTrueNorthPaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
+        bubbleLevelOutlinePaint.color = if (currentThemeIndex != 0) primary else Color.DKGRAY
+        bubbleLevelBubblePaint.color = if (currentThemeIndex == 1) "#44FF0000".toColorInt() else if (currentThemeIndex == 2) "#4400FF00".toColorInt() else "#88FFFFFF".toColorInt()
+        goToNeedlePaint.color = if (currentThemeIndex != 0) primary else Color.YELLOW
     }
 
     private fun drawCalibrationWarning(canvas: Canvas, radius: Float) {
         val warningPaint = Paint().apply {
-            color = Color.RED
-            textSize = 24f
+            color = if (currentThemeIndex == 2) Color.GREEN else Color.RED
+            textSize = 28f
             textAlign = Paint.Align.CENTER
             isAntiAlias = true
-            alpha = (127 + 128 * sin(SystemClock.elapsedRealtime() * 0.005f)).toInt().coerceIn(0, 255)
+            alpha = (127 + 128 * sin(SystemClock.elapsedRealtime() * 0.008f)).toInt().coerceIn(0, 255)
+            typeface = Typeface.DEFAULT_BOLD
         }
+        
+        // Draw Figure-8 path above the text
+        val f8Radius = radius * 0.08f
+        val f8CenterY = -radius * 0.55f
+        
+        // Simple figure-8 approximation with two circles
+        warningPaint.style = Paint.Style.STROKE
+        warningPaint.strokeWidth = 3f
+        canvas.drawCircle(-f8Radius, f8CenterY, f8Radius, warningPaint)
+        canvas.drawCircle(f8Radius, f8CenterY, f8Radius, warningPaint)
+        
+        warningPaint.style = Paint.Style.FILL
         canvas.drawText("CALIBRATE (8)", 0f, -radius * 0.4f, warningPaint)
     }
 
@@ -760,7 +792,7 @@ class CompassView @JvmOverloads constructor(
             fireworksParticlePaint.color = particle.color
             fireworksParticlePaint.alpha = particle.alpha
             // Sparkle effect: vary radius slightly based on current time
-            val sparkle = (1.0f + 0.3f * sin(SystemClock.elapsedRealtime() * 0.02f))
+            val sparkle = (1.0f + (0.3f * sin(SystemClock.elapsedRealtime() * 0.02f)))
             val radius = (fireworksParticlePaint.strokeWidth / 2f) * sparkle
             canvas.drawCircle(particle.x, particle.y, radius, fireworksParticlePaint)
         }
