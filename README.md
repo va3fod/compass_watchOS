@@ -64,8 +64,11 @@ If Compass Cat brings value to your adventures, please consider making a small c
 
 ## Changelog
 
-### v1.2
-*   **App Renamed to "Compass Cat"**.
+### v1.4
+*   **Persistent Secret Screen**: The "Support the Developer" screen now stays visible until you **double-tap** to return to the compass view.
+
+### v1.3
+*   **Support the Developer**: Added donation information to the README and the "Secret" screen on the watch.
 *   **Battery Optimizations**: Reduced sensor sampling rate (15Hz vs 50Hz+) to save power.
 *   **Adaptive GPS**: Smarter location update frequency to preserve battery during long trips.
 *   **Ambient Mode**: Added a low-power grayscale UI for always-on display support.
