@@ -68,7 +68,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.3"
+    private var versionText = "v1.4"
     private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
@@ -192,6 +192,23 @@ class CompassView @JvmOverloads constructor(
         val distFromCenter = sqrt((touchX * touchX) + (touchY * touchY))
         val edgeThreshold = (min(width, height) / 2f) * 0.7f
 
+        // --- Persistent Secret Screen Toggle ---
+        if (showSecretText) {
+            if (event.action == MotionEvent.ACTION_UP) {
+                val currentTime = System.currentTimeMillis()
+                if ((currentTime - lastTapTimeMs) <= doubleTapTimeoutMs) {
+                    // Double tap detected: Exit secret screen
+                    showSecretText = false
+                    lastTapTimeMs = 0L
+                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    invalidate()
+                } else {
+                    lastTapTimeMs = currentTime
+                }
+            }
+            return true // Consume all touch events while in secret mode
+        }
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 singleTapRunnable?.let { interactionHandler.removeCallbacks(it) }
@@ -259,11 +276,6 @@ class CompassView @JvmOverloads constructor(
                     val wasLongPress = (longPressRunnable == null)
                     val wasHoldingSymbol = isHoldingSymbol
                     val wasHoldingAny = (isHoldingSymbol || isHoldingCenter || isHoldingEdge)
-
-                    if (wasHoldingSymbol && wasLongPress) {
-                        // Trigger persistence when callsign is released
-                        interactionHandler.postDelayed(hideSecretTextRunnable, hideSecretTextDelayMs)
-                    }
 
                     resetSymbolInteractionState(keepSecretIfHolding = true)
 

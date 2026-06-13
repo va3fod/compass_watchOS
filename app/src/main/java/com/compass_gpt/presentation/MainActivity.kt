@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 
         val container = findViewById<FrameLayout>(R.id.compassContainer)
         compassView = CompassView(this)
-        compassView.setVersionInfo("v1.3")
+        compassView.setVersionInfo("v1.4")
         container.addView(
             compassView,
             FrameLayout.LayoutParams(
