@@ -1,7 +1,6 @@
 package com.compass_gpt.presentation
 
 import android.Manifest
-import android.app.Activity
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -16,7 +15,9 @@ import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
+import androidx.wear.ambient.AmbientLifecycleObserver
 import com.compass_gpt.R
 import com.google.android.gms.location.*
 import java.text.SimpleDateFormat
@@ -24,7 +25,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 
-class MainActivity : Activity(), SensorEventListener {
+class MainActivity : ComponentActivity(), SensorEventListener {
 
     // --- Constants ---
     private val locationPermissionRequestCode = 1001
@@ -45,6 +46,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var currentRollDeg = 0f
     private var currentSensorAccuracy: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
     private var bezelRotationDeg = 0f
+    private var isAmbient = false
 
     // --- Location ---
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -55,13 +57,38 @@ class MainActivity : Activity(), SensorEventListener {
     private var lastKnownLocation: Location? = null
     private var waypointLocation: Location? = null
 
+    // --- Ambient Mode ---
+    private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
+        override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
+            isAmbient = true
+            updateBatteryOptimizationState()
+            compassView.setAmbientMode(enabled = true)
+        }
+
+        override fun onExitAmbient() {
+            isAmbient = false
+            updateBatteryOptimizationState()
+            compassView.setAmbientMode(enabled = false)
+        }
+
+        override fun onUpdateAmbient() {
+            // Update UI once per minute in ambient mode
+            updateCompassViewGpsData()
+            compassView.invalidate()
+        }
+    }
+    
+    private val ambientObserver = AmbientLifecycleObserver(this, ambientCallback)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycle.addObserver(ambientObserver)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
         val container = findViewById<FrameLayout>(R.id.compassContainer)
         compassView = CompassView(this)
+        compassView.setVersionInfo("v1.2")
         container.addView(
             compassView,
             FrameLayout.LayoutParams(
@@ -101,9 +128,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onResume() {
         super.onResume()
-        rotationVectorSensor?.also { sensor ->
-            sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
-        }
+        updateBatteryOptimizationState()
 
         // FORCE a redraw when returning from a paused state (like dismissing a permission dialog)
         compassView.invalidate()
@@ -117,6 +142,20 @@ class MainActivity : Activity(), SensorEventListener {
         super.onPause()
         sensorManager.unregisterListener(this)
         fusedLocationClient.removeLocationUpdates(locationCallback)
+    }
+
+    private fun updateBatteryOptimizationState() {
+        if (isAmbient) {
+            sensorManager.unregisterListener(this)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            requestLocationUpdatesInternal() // Switch to slower updates
+        } else {
+            rotationVectorSensor?.also { sensor ->
+                sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
+            }
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            requestLocationUpdatesInternal() // Restore faster updates
+        }
     }
 
     private fun checkLocationPermission(): Boolean {
@@ -144,9 +183,15 @@ class MainActivity : Activity(), SensorEventListener {
     private fun requestLocationUpdatesInternal() {
         if (!checkLocationPermission()) return
         try {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000L)
-                .setMinUpdateIntervalMillis(5000L)
+            val interval = if (isAmbient) 60000L else 15000L
+            val priority = if (isAmbient) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
+            
+            val locationRequest = LocationRequest.Builder(priority, interval)
+                .setMinUpdateIntervalMillis(interval / 2)
                 .build()
+            
+            // Remove existing updates before requesting new ones to ensure frequency change
+            fusedLocationClient.removeLocationUpdates(locationCallback)
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
         } catch (_: SecurityException) {
             Toast.makeText(this, "Location permission error.", Toast.LENGTH_SHORT).show()
@@ -247,9 +292,11 @@ class MainActivity : Activity(), SensorEventListener {
         return super.onGenericMotionEvent(event)
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<out String>, grantResults: IntArray,
+        requestCode: Int, permissions: Array<String>, grantResults: IntArray,
     ) {
+        @Suppress("DEPRECATION")
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == locationPermissionRequestCode) {
             if (grantResults.isNotEmpty() && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {

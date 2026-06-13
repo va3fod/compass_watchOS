@@ -12,8 +12,8 @@ android {
         applicationId = "com.compass_gpt"
         minSdk = 34
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
     }
 
@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.wear.tooling.preview)
     implementation(libs.activity.compose)
     implementation(libs.core.splashscreen)
+    implementation(libs.wear)
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.8.21")
     implementation("com.google.android.gms:play-services-location:21.0.1")
     testImplementation("junit:junit:4.13.2")

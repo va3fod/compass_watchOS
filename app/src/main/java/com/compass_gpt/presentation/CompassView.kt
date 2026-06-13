@@ -50,6 +50,7 @@ class CompassView @JvmOverloads constructor(
     private val bubbleLevelOutlinePaint = Paint().apply { color = Color.DKGRAY; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
     private val bubbleLevelBubblePaint = Paint().apply { color = "#88FFFFFF".toColorInt(); style = Paint.Style.FILL; isAntiAlias = true }
     private val secretTextPaint = Paint().apply { color = Color.RED; textSize = 100f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
+    private val versionTextPaint = Paint().apply { color = Color.WHITE; textSize = 30f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT }
     private val goToNeedlePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 5f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
     private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
     private val accuracyPaintMedium = Paint().apply { color = Color.YELLOW; style = Paint.Style.FILL }
@@ -66,6 +67,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
+    private var versionText = "v1.1"
     private val squirrelSymbol = "🐿️"
 
     // --- Reusable Rects ---
@@ -89,6 +91,7 @@ class CompassView @JvmOverloads constructor(
     private var symbolBounds = RectF()
     private val symbolClickPadding = 20f
     private var sensorAccuracyLevel: Int = SensorManager.SENSOR_STATUS_UNRELIABLE
+    private var isAmbientMode = false
 
     // Interaction State
     private var isHoldingSymbol = false
@@ -163,6 +166,18 @@ class CompassView @JvmOverloads constructor(
             sensorAccuracyLevel = accuracy
             invalidate()
         }
+    }
+
+    fun setAmbientMode(enabled: Boolean) {
+        if (isAmbientMode != enabled) {
+            isAmbientMode = enabled
+            invalidate()
+        }
+    }
+
+    fun setVersionInfo(version: String) {
+        versionText = version
+        invalidate()
     }
 
     // --- Touch Event Handling ---
@@ -464,16 +479,23 @@ class CompassView @JvmOverloads constructor(
         val edgeRadius = min(cx, cy)
         val mainRadius = (edgeRadius * 0.90f)
 
-        // Update paint colors for Theme
+        // Update paint colors for Theme/Ambient
         updatePaintsForTheme()
 
         // 1) Draw Bezel
-        canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
+        if (!isAmbientMode) {
+            canvas.withRotation(bezelRotationDeg) { drawBezel(this, edgeRadius) }
+        } else {
+            // Simplified bezel for ambient
+            drawAmbientBezel(canvas, edgeRadius)
+        }
 
         // 2) Draw Bearing Marker
-        drawBearingMarker(canvas, edgeRadius)
+        if (!isAmbientMode) {
+            drawBearingMarker(canvas, edgeRadius)
+        }
 
-        if (isEasterEggModeActive) {
+        if (isEasterEggModeActive && !isAmbientMode) {
             drawChaseScene(canvas, mainRadius)
             if (isFireworksActive) {
                 drawFireworks(canvas)
@@ -489,33 +511,55 @@ class CompassView @JvmOverloads constructor(
                 headingToShow = magneticNeedleDeg
                 currentNeedlePaint = magneticNeedlePaint
             }
+            
+            // In ambient mode, we only rotate the needle if it's an update, 
+            // but since we call invalidate() onUpdateAmbient, it's fine.
             canvas.withRotation(-headingToShow) {
                 drawNeedle(this, mainRadius, currentNeedlePaint)
             }
 
             // Waypoint Needle
-            waypointBearing?.let { wpBearing ->
-                canvas.withRotation(-(headingToShow - wpBearing)) {
-                    drawGoToNeedle(this, mainRadius, goToNeedlePaint)
+            if (!isAmbientMode) {
+                waypointBearing?.let { wpBearing ->
+                    canvas.withRotation(-(headingToShow - wpBearing)) {
+                        drawGoToNeedle(this, mainRadius, goToNeedlePaint)
+                    }
                 }
             }
 
-            drawModeSymbol(canvas, mainRadius)
-            drawBubbleLevel(canvas, mainRadius)
-            drawAccuracyIndicator(canvas, mainRadius)
+            if (!isAmbientMode) {
+                drawModeSymbol(canvas, mainRadius)
+                drawBubbleLevel(canvas, mainRadius)
+                drawAccuracyIndicator(canvas, mainRadius)
+            }
+            
             drawReadouts(canvas)
             
-            if (sensorAccuracyLevel == SensorManager.SENSOR_STATUS_UNRELIABLE) {
+            if (!isAmbientMode && (sensorAccuracyLevel == SensorManager.SENSOR_STATUS_UNRELIABLE)) {
                 drawCalibrationWarning(canvas, mainRadius)
             }
         }
 
-        if (showSecretText) {
+        if (showSecretText && !isAmbientMode) {
             drawSecretTextOverlay(canvas)
         }
     }
 
     private fun updatePaintsForTheme() {
+        if (isAmbientMode) {
+            val ambientColor = Color.WHITE
+            bezelPaint.color = ambientColor
+            bezelPaint.strokeWidth = 1f
+            readoutPaint.color = ambientColor
+            magneticReadoutPaint.color = ambientColor
+            trueNorthReadoutPaint.color = ambientColor
+            magneticNeedlePaint.color = ambientColor
+            magneticNeedlePaint.strokeWidth = 4f
+            trueNorthNeedlePaint.color = ambientColor
+            trueNorthNeedlePaint.strokeWidth = 4f
+            return
+        }
+
         val primary = when (currentThemeIndex) {
             1 -> Color.RED
             2 -> Color.GREEN
@@ -528,17 +572,29 @@ class CompassView @JvmOverloads constructor(
         }
         
         bezelPaint.color = primary
+        bezelPaint.strokeWidth = 2f
         readoutPaint.color = primary
         magneticReadoutPaint.color = Color.RED
         trueNorthReadoutPaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
         magneticNeedlePaint.color = Color.RED
+        magneticNeedlePaint.strokeWidth = 8f
         trueNorthNeedlePaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
+        trueNorthNeedlePaint.strokeWidth = 8f
         bearingMarkerPaint.color = accent
         catSymbolMagneticPaint.color = Color.RED
         catSymbolTrueNorthPaint.color = if (currentThemeIndex != 0) primary else Color.BLUE
         bubbleLevelOutlinePaint.color = if (currentThemeIndex != 0) primary else Color.DKGRAY
         bubbleLevelBubblePaint.color = if (currentThemeIndex == 1) "#44FF0000".toColorInt() else if (currentThemeIndex == 2) "#4400FF00".toColorInt() else "#88FFFFFF".toColorInt()
         goToNeedlePaint.color = if (currentThemeIndex != 0) primary else Color.YELLOW
+    }
+
+    private fun drawAmbientBezel(canvas: Canvas, radius: Float) {
+        // Just draw 4 major ticks for ambient mode to save pixels
+        for (angle in 0 until 360 step 90) {
+            val tickInner = (radius * 0.90f)
+            val rad = Math.toRadians(angle.toDouble()).toFloat()
+            canvas.drawLine((radius * sin(rad)), (-radius * cos(rad)), (tickInner * sin(rad)), (-tickInner * cos(rad)), bezelPaint)
+        }
     }
 
     private fun drawCalibrationWarning(canvas: Canvas, radius: Float) {
@@ -656,9 +712,14 @@ class CompassView @JvmOverloads constructor(
     private fun drawSecretTextOverlay(canvas: Canvas) {
         // Center the callsign and clear the area behind it for maximum visibility
         canvas.drawColor(Color.BLACK)
+        
+        // Draw Callsign
         secretTextPaint.getTextBounds(secretText, 0, secretText.length, tempTextBounds)
-        val yOffset = (tempTextBounds.height() / 2f) - tempTextBounds.bottom
-        canvas.drawText(secretText, 0f, yOffset, secretTextPaint)
+        val secretYOffset = (tempTextBounds.height() / 2f) - tempTextBounds.bottom
+        canvas.drawText(secretText, 0f, secretYOffset - 20f, secretTextPaint)
+        
+        // Draw Version below it
+        canvas.drawText(versionText, 0f, secretYOffset + 60f, versionTextPaint)
     }
 
     private fun drawReadouts(canvas: Canvas) {
