@@ -7,6 +7,13 @@
 
 Compass Cat transforms your Google Pixel Watch (and other compatible Wear OS devices) into an advanced navigation tool. Designed for outdoor enthusiasts, hikers, and anyone needing reliable orientation, this app combines classic compass functionality with modern GPS data and intuitive controls.
 
+## Support the Developer ☕
+
+If Compass Cat brings value to your adventures, please consider making a small contribution to help keep development going. Every little bit helps and means the world to me!
+
+**Send support via PayPal, Zelle, or Interac to:**
+`aschiuta@gmail.com`
+
 ## Key Features
 
 *   **Accurate Compass:** Displays a clear compass rose with a primary needle indicating North.

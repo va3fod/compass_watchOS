@@ -51,6 +51,7 @@ class CompassView @JvmOverloads constructor(
     private val bubbleLevelBubblePaint = Paint().apply { color = "#88FFFFFF".toColorInt(); style = Paint.Style.FILL; isAntiAlias = true }
     private val secretTextPaint = Paint().apply { color = Color.RED; textSize = 100f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD) }
     private val versionTextPaint = Paint().apply { color = Color.WHITE; textSize = 30f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT }
+    private val donationTextPaint = Paint().apply { color = Color.YELLOW; textSize = 22f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
     private val goToNeedlePaint = Paint().apply { color = Color.YELLOW; strokeWidth = 5f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
     private val accuracyPaintHigh = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL }
     private val accuracyPaintMedium = Paint().apply { color = Color.YELLOW; style = Paint.Style.FILL }
@@ -67,7 +68,8 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.1"
+    private var versionText = "v1.3"
+    private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
     // --- Reusable Rects ---
@@ -716,10 +718,14 @@ class CompassView @JvmOverloads constructor(
         // Draw Callsign
         secretTextPaint.getTextBounds(secretText, 0, secretText.length, tempTextBounds)
         val secretYOffset = (tempTextBounds.height() / 2f) - tempTextBounds.bottom
-        canvas.drawText(secretText, 0f, secretYOffset - 20f, secretTextPaint)
+        canvas.drawText(secretText, 0f, secretYOffset - 50f, secretTextPaint)
         
         // Draw Version below it
-        canvas.drawText(versionText, 0f, secretYOffset + 60f, versionTextPaint)
+        canvas.drawText(versionText, 0f, secretYOffset + 10f, versionTextPaint)
+        
+        // Draw Donation Request
+        canvas.drawText("Support: PayPal/Zelle/Interac", 0f, secretYOffset + 60f, donationTextPaint)
+        canvas.drawText(donationEmail, 0f, secretYOffset + 90f, donationTextPaint)
     }
 
     private fun drawReadouts(canvas: Canvas) {
