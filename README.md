@@ -64,6 +64,10 @@ If Compass Cat brings value to your adventures, please consider making a small c
 
 ## Changelog
 
+### v1.7
+*   **Drift Mitigation**: Enhanced sensor stability by ensuring strict adherence to filtered rotation data.
+*   **Robustness Improvements**: Optimized internal math to prevent orientation jumps during magnetic interference.
+
 ### v1.6
 *   **Fixed Declination Orientation**: Corrected the visual relationship between Magnetic and True North (Magnetic is CCW of True North for negative/West declination).
 *   **Restored Smoothness**: Re-synchronized the canvas rotation with the original filtering logic to ensure perfectly stable movement.

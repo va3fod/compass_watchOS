@@ -69,7 +69,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.6"
+    private var versionText = "v1.7"
     private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
@@ -515,7 +515,6 @@ class CompassView @JvmOverloads constructor(
             if (isFireworksActive) {
                 drawFireworks(canvas)
             }
-        } else {
             // --- DRAW COMPASS ELEMENTS ---
 
             // The magnetic heading is the filtered azimuth from MainActivity (filteredAzimuthDeg)
@@ -525,9 +524,9 @@ class CompassView @JvmOverloads constructor(
                 drawNorthMarker(this, edgeRadius, magneticNeedlePaint)
 
                 // Draw True North Marker (BLUE Triangle) offset by declination
-                // Magnetic North = True North - Declination => True North = Magnetic North + Declination
-                // BUT, in our rotating coordinate system, if Declination is -10 (West), 
-                // True North is 10 degrees to the RIGHT (CW) of Magnetic North.
+                // For negative (West) declination, True North is CW (Right) of Magnetic North.
+                // Math: TrueNorth_Angle_On_Rose = 0 + (-declination)
+                // If declination is -10, marker is at +10 degrees on the rotating rose.
                 canvas.withRotation(-declDeg) {
                     drawNorthMarker(this, edgeRadius, trueNorthNeedlePaint)
                 }
@@ -536,6 +535,8 @@ class CompassView @JvmOverloads constructor(
             // Waypoint Needle
             if (!isAmbientMode) {
                 // If showTrueNorth is true, we display headings relative to True North
+                // TrueHeading = MagneticHeading + Declination
+                // If MagneticHeading is 0 and Declination is -10, TrueHeading is -10 (350).
                 val trueHeading = (((magneticNeedleDeg + declDeg) + 360f) % 360f)
                 val currentReferenceHeading = if (showTrueNorth) trueHeading else magneticNeedleDeg
                 waypointBearing?.let { wpBearing ->
