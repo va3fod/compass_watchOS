@@ -64,6 +64,10 @@ If Compass Cat brings value to your adventures, please consider making a small c
 
 ## Changelog
 
+### v1.8
+*   **Restored UI Rendering**: Fixed a logic error in `onDraw` that caused readouts and triangles to disappear in v1.7.
+*   **Stability**: Verified all primary compass elements are correctly layered and visible.
+
 ### v1.7
 *   **Drift Mitigation**: Enhanced sensor stability by ensuring strict adherence to filtered rotation data.
 *   **Robustness Improvements**: Optimized internal math to prevent orientation jumps during magnetic interference.

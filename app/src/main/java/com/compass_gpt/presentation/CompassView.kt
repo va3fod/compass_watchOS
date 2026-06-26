@@ -69,7 +69,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.7"
+    private var versionText = "v1.8"
     private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
@@ -515,6 +515,7 @@ class CompassView @JvmOverloads constructor(
             if (isFireworksActive) {
                 drawFireworks(canvas)
             }
+        } else {
             // --- DRAW COMPASS ELEMENTS ---
 
             // The magnetic heading is the filtered azimuth from MainActivity (filteredAzimuthDeg)
