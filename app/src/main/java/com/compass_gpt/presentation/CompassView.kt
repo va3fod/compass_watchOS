@@ -69,7 +69,7 @@ class CompassView @JvmOverloads constructor(
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.5"
+    private var versionText = "v1.6"
     private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
@@ -518,23 +518,26 @@ class CompassView @JvmOverloads constructor(
         } else {
             // --- DRAW COMPASS ELEMENTS ---
 
-            // The magnetic heading is the raw azimuth from the sensor (filtered)
-            // In a standard compass app, if you want to show where "North" is relative to the device, 
-            // you rotate the whole canvas by -azimuth.
+            // The magnetic heading is the filtered azimuth from MainActivity (filteredAzimuthDeg)
+            // To show North at the top, we rotate the rose by -heading.
             canvas.withRotation(-magneticNeedleDeg) {
                 // Draw Magnetic North Marker (RED Triangle) at 0 degrees on the rotating rose
                 drawNorthMarker(this, edgeRadius, magneticNeedlePaint)
 
                 // Draw True North Marker (BLUE Triangle) offset by declination
-                // True North = Magnetic North + Declination
-                canvas.withRotation(declDeg) {
+                // Magnetic North = True North - Declination => True North = Magnetic North + Declination
+                // BUT, in our rotating coordinate system, if Declination is -10 (West), 
+                // True North is 10 degrees to the RIGHT (CW) of Magnetic North.
+                canvas.withRotation(-declDeg) {
                     drawNorthMarker(this, edgeRadius, trueNorthNeedlePaint)
                 }
             }
 
             // Waypoint Needle
             if (!isAmbientMode) {
-                val currentReferenceHeading = if (showTrueNorth) (magneticNeedleDeg - declDeg) else magneticNeedleDeg
+                // If showTrueNorth is true, we display headings relative to True North
+                val trueHeading = (((magneticNeedleDeg + declDeg) + 360f) % 360f)
+                val currentReferenceHeading = if (showTrueNorth) trueHeading else magneticNeedleDeg
                 waypointBearing?.let { wpBearing ->
                     canvas.withRotation(-(currentReferenceHeading - wpBearing)) {
                         drawGoToNeedle(this, mainRadius, goToNeedlePaint)
@@ -757,7 +760,7 @@ class CompassView @JvmOverloads constructor(
 
     private fun drawReadouts(canvas: Canvas) {
         val magneticHeading = magneticNeedleDeg
-        val trueHeading = (((magneticNeedleDeg - declDeg) + 360f) % 360f)
+        val trueHeading = (((magneticNeedleDeg + declDeg) + 360f) % 360f)
         val headingToReference = if (showTrueNorth) trueHeading else magneticHeading
 
         val bearing = (((360f - bezelRotationDeg) + 360f) % 360f)

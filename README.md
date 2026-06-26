@@ -64,6 +64,10 @@ If Compass Cat brings value to your adventures, please consider making a small c
 
 ## Changelog
 
+### v1.6
+*   **Fixed Declination Orientation**: Corrected the visual relationship between Magnetic and True North (Magnetic is CCW of True North for negative/West declination).
+*   **Restored Smoothness**: Re-synchronized the canvas rotation with the original filtering logic to ensure perfectly stable movement.
+
 ### v1.5
 *   **Corrected Declination Logic**: Fixed the orientation of True North relative to Magnetic North.
 *   **New North Indicators**: Replaced traditional needles with intuitive triangle markers on the inner compass ring.

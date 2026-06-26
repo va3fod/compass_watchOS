@@ -12,8 +12,8 @@ android {
         applicationId = "com.compass_gpt"
         minSdk = 34
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
 
     }
 
