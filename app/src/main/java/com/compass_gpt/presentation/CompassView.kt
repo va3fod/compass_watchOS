@@ -42,8 +42,8 @@ class CompassView @JvmOverloads constructor(
     private val readoutPaint = Paint().apply { color = Color.WHITE; textSize = 30f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
     private val magneticReadoutPaint = Paint().apply { color = Color.RED; textSize = 30f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
     private val trueNorthReadoutPaint = Paint().apply { color = Color.BLUE; textSize = 30f; textAlign = Paint.Align.CENTER; isAntiAlias = true; typeface = Typeface.DEFAULT_BOLD }
-    private val magneticNeedlePaint = Paint().apply { color = Color.RED; strokeWidth = 8f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
-    private val trueNorthNeedlePaint = Paint().apply { color = Color.BLUE; strokeWidth = 8f; style = Paint.Style.STROKE; isAntiAlias = true; strokeCap = Paint.Cap.ROUND }
+    private val magneticNeedlePaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL; isAntiAlias = true }
+    private val trueNorthNeedlePaint = Paint().apply { color = Color.BLUE; style = Paint.Style.FILL; isAntiAlias = true }
     private val bearingMarkerPaint = Paint().apply { color = "#ADD8E6".toColorInt(); style = Paint.Style.FILL; isAntiAlias = true }
     private val catSymbolMagneticPaint = Paint().apply { color = Color.RED; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
     private val catSymbolTrueNorthPaint = Paint().apply { color = Color.BLUE; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
@@ -64,11 +64,12 @@ class CompassView @JvmOverloads constructor(
     private val fireworkColors = listOf(Color.YELLOW, Color.RED, Color.WHITE, Color.CYAN, Color.MAGENTA, Color.GREEN, "#FF8C00".toColorInt(), "#FF1493".toColorInt())
 
     // --- Path & Symbols ---
-    private val bearingMarkerPath = Path()
+    private val trueNorthMarkerPath = Path()
+    private val magneticNorthMarkerPath = Path()
     private val magneticNorthSymbol = "🐈"
     private val trueNorthSymbol = "🐾"
     private val secretText = "VA3FOD"
-    private var versionText = "v1.4"
+    private var versionText = "v1.5"
     private val donationEmail = "aschiuta@gmail.com"
     private val squirrelSymbol = "🐿️"
 
@@ -515,27 +516,27 @@ class CompassView @JvmOverloads constructor(
                 drawFireworks(canvas)
             }
         } else {
-            // Draw Normal Compass Elements
-            val headingToShow: Float
-            val currentNeedlePaint: Paint
-            if (showTrueNorth) {
-                headingToShow = (((magneticNeedleDeg - declDeg) + 360f) % 360f)
-                currentNeedlePaint = trueNorthNeedlePaint
-            } else {
-                headingToShow = magneticNeedleDeg
-                currentNeedlePaint = magneticNeedlePaint
-            }
-            
-            // In ambient mode, we only rotate the needle if it's an update, 
-            // but since we call invalidate() onUpdateAmbient, it's fine.
-            canvas.withRotation(-headingToShow) {
-                drawNeedle(this, mainRadius, currentNeedlePaint)
+            // --- DRAW COMPASS ELEMENTS ---
+
+            // The magnetic heading is the raw azimuth from the sensor (filtered)
+            // In a standard compass app, if you want to show where "North" is relative to the device, 
+            // you rotate the whole canvas by -azimuth.
+            canvas.withRotation(-magneticNeedleDeg) {
+                // Draw Magnetic North Marker (RED Triangle) at 0 degrees on the rotating rose
+                drawNorthMarker(this, edgeRadius, magneticNeedlePaint)
+
+                // Draw True North Marker (BLUE Triangle) offset by declination
+                // True North = Magnetic North + Declination
+                canvas.withRotation(declDeg) {
+                    drawNorthMarker(this, edgeRadius, trueNorthNeedlePaint)
+                }
             }
 
             // Waypoint Needle
             if (!isAmbientMode) {
+                val currentReferenceHeading = if (showTrueNorth) (magneticNeedleDeg - declDeg) else magneticNeedleDeg
                 waypointBearing?.let { wpBearing ->
-                    canvas.withRotation(-(headingToShow - wpBearing)) {
+                    canvas.withRotation(-(currentReferenceHeading - wpBearing)) {
                         drawGoToNeedle(this, mainRadius, goToNeedlePaint)
                     }
                 }
@@ -636,17 +637,31 @@ class CompassView @JvmOverloads constructor(
     }
 
     // --- Private Drawing Helpers ---
+    private fun drawNorthMarker(canvas: Canvas, radius: Float, paint: Paint) {
+        val markerInnerY = (-radius * 0.90f)
+        val markerHeight = (radius * 0.08f)
+        val markerOuterY = (markerInnerY - markerHeight)
+        val markerWidth = (radius * 0.10f)
+        
+        val path = Path()
+        path.moveTo(0f, markerOuterY)
+        path.lineTo(-(markerWidth / 2f), markerInnerY)
+        path.lineTo((markerWidth / 2f), markerInnerY)
+        path.close()
+        canvas.drawPath(path, paint)
+    }
+
     private fun drawBearingMarker(canvas: Canvas, radius: Float) {
         val markerOuterY = (-radius * 1.0f)
         val markerHeight = (radius * 0.1f)
         val markerInnerY = (markerOuterY + markerHeight)
         val markerWidth = (radius * 0.12f)
-        bearingMarkerPath.reset()
-        bearingMarkerPath.moveTo(0f, markerOuterY)
-        bearingMarkerPath.lineTo(-(markerWidth / 2f), markerInnerY)
-        bearingMarkerPath.lineTo((markerWidth / 2f), markerInnerY)
-        bearingMarkerPath.close()
-        canvas.drawPath(bearingMarkerPath, bearingMarkerPaint)
+        val path = Path()
+        path.moveTo(0f, markerOuterY)
+        path.lineTo(-(markerWidth / 2f), markerInnerY)
+        path.lineTo((markerWidth / 2f), markerInnerY)
+        path.close()
+        canvas.drawPath(path, bearingMarkerPaint)
     }
 
     private fun drawBezel(canvas: Canvas, radius: Float) {
@@ -741,6 +756,10 @@ class CompassView @JvmOverloads constructor(
     }
 
     private fun drawReadouts(canvas: Canvas) {
+        val magneticHeading = magneticNeedleDeg
+        val trueHeading = (((magneticNeedleDeg - declDeg) + 360f) % 360f)
+        val headingToReference = if (showTrueNorth) trueHeading else magneticHeading
+
         val bearing = (((360f - bezelRotationDeg) + 360f) % 360f)
         val bearingSuffix = if (showTrueNorth) "°T" else "°M"
         val lineBRGUpdated = "BRG ${bearing.toInt()}$bearingSuffix"

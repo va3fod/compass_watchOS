@@ -64,6 +64,12 @@ If Compass Cat brings value to your adventures, please consider making a small c
 
 ## Changelog
 
+### v1.5
+*   **Corrected Declination Logic**: Fixed the orientation of True North relative to Magnetic North.
+*   **New North Indicators**: Replaced traditional needles with intuitive triangle markers on the inner compass ring.
+*   **Dual North Display**: Both True (Blue Triangle) and Magnetic (Red Triangle) North are now visible at all times.
+*   **Reference Toggle**: Clicking the cat icon now switches the bearing reference and readouts between Magnetic and True North without hiding the other.
+
 ### v1.4
 *   **Persistent Secret Screen**: The "Support the Developer" screen now stays visible until you **double-tap** to return to the compass view.
 
